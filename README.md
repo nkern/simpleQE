@@ -1,5 +1,6 @@
-# A simple framework for power spectrum quadratic estimation
---
+# simpleQE
+
+A simple framework for power spectrum quadratic estimation
 
 
 
