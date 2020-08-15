@@ -72,6 +72,7 @@ class QE:
         else:
             self.spw = spw
         self.spw_Nfreqs = len(freqs[self.spw])
+        self.dfreq = np.diff(freqs)[0]
 
         # cosmology
         if cosmo is None:
@@ -98,20 +99,23 @@ class QE:
         Parameters
         ----------
         R : ndarray or DataContainer (Nfreqs, Nfreqs)
-        
+
         Results
         -------
         self.R
         """
         self._check_type(R)
         self.R = R[self.spw, :]
-   
-    def compute_Q(self, OmegaP, prior=None):
-        """
-        Compute Q = dC / dp
 
-        OmegaP : ndarray, (Nfreqs,)
-            Sky integral of telescope primary beam power [radians^2]
+    def compute_Q(self, Omega_Eff, prior=None):
+        """
+        Compute Q = dC / dp, divided by normalization scalar
+
+        Omega_Eff : float
+            Omega_Eff = Omega_p^2 / Omega_pp, where Omega_p is the sky
+            integral of the primary beam power [radians^2], and Omega_pp
+            is the sky integral of the squared primary beam power [radians^2].
+            See Appendix of Parsons+2014
         prior : ndarray (Ndelays,)
             Bandpower prior. Re-defines Q^prime_a = prior_a * Q_a
             And defines p^prime_a = p_a / prior_a
@@ -120,13 +124,14 @@ class QE:
         Nbps = self.spw_Nfreqs
 
         # get DFT vectors, separable components of Q matrix
-        self.qft = np.fft.fftshift([np.fft.ifft(np.eye(Nbps), axis=-1)[i] for i in range(Nbps)], axes=0) * Nbps
+        self.qft = np.fft.fftshift([np.fft.ifft(np.eye(Nbps), axis=-1)[i] for i in range(Nbps)], axes=0)
 
         # create Nbps x spw_Nfreqs x spw_Nfreqs Q matrix
         self.Q = np.array([_q[None, :].T.conj().dot(_q[None, :]) for _q in self.qft])
 
-        # divide by cosmology X2Y scalar and beam normalizations
-        self.Q /= self.X2Y * OmegaP**2
+        # divide by scalar normalization: cosmology X2Y, beam integral, and bandwidth
+        self.scalar = self.X2Y * Omega_Eff * self.spw_Nfreqs * self.dfreq
+        self.Q /= self.scalar
 
         # if R is not square, create a zero-padded Q matrix for computing H_ab = tr[R.T Q_a R Q_zpad_b]
         # if R is square, self.Q_zpad = self.Q
