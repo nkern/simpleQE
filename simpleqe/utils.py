@@ -17,7 +17,7 @@ class Cosmology(FlatLambdaCDM):
     Subclass of astropy.FlatLambdaCDM, with additional methods for 21cm intensity mapping.
     """
 
-    def __init__(self, H0=67.7, Om0=0.3075, Ob0=0.0486, Ode0=0.6910):
+    def __init__(self, H0=67.7, Om0=0.3075, Ob0=0.0486):
         """
         Subclass of astropy.FlatLambdaCDM, with additional methods for 21cm intensity mapping.
         Default parameters are derived from the Planck2015 analysis.
@@ -32,11 +32,8 @@ class Cosmology(FlatLambdaCDM):
 
         Ob0 : float
             Omega baryon at z = 0. Omega CDM is defined relative to Om0 and Ob0.
-
-        Ode0 : float    
-            Omega dark energy at z = 0.
         """
-        super().__init__(H0, Om0, Ode0, Ob0=Ob0, Tcmb0=2.725, Neff=3.05, m_nu=[0., 0., 0.06] * units.eV)
+        super().__init__(H0, Om0, Tcmb0=2.725, Ob0=Ob0, Neff=3.05, m_nu=[0., 0., 0.06] * units.eV)
 
         # 21 cm specific quantities
         self._f21 = 1.420405751e9  # frequency of 21cm transition in Hz
