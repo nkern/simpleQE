@@ -232,10 +232,10 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
     x1 = f + e + n1
     x2 = f + e + n2
     
-    D = qe.QE(freqs[data_spw], x1, x2=x2, C=(Kf + Ke + Kn)[data_spw, data_spw], spw=pspec_spw)
-    F = qe.QE(freqs[data_spw], f, C=Kf[data_spw, data_spw], spw=pspec_spw)
-    E = qe.QE(freqs[data_spw], e, C=Ke[data_spw, data_spw], spw=pspec_spw)
-    N = qe.QE(freqs[data_spw], n1, x2=n2, C=Kn[data_spw, data_spw], spw=pspec_spw)
+    D = QE(freqs[data_spw], x1, x2=x2, C=(Kf + Ke + Kn)[data_spw, data_spw], spw=pspec_spw)
+    F = QE(freqs[data_spw], f, C=Kf[data_spw, data_spw], spw=pspec_spw)
+    E = QE(freqs[data_spw], e, C=Ke[data_spw, data_spw], spw=pspec_spw)
+    N = QE(freqs[data_spw], n1, x2=n2, C=Kn[data_spw, data_spw], spw=pspec_spw)
     
     return D, F, E, N
 
