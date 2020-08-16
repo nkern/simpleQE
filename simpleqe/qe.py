@@ -118,7 +118,6 @@ class QE:
         -------
         self.R
         """
-        self._check_type(R)
         self.R = R[self.spw, :]
 
     def compute_Q(self, prior=None):
@@ -274,7 +273,6 @@ class QE:
         -------
         self.p, self.b
         """
-        self._check_type(C_bias)
         self.kp_mag = np.abs(self.kp)
         # compute normalized bandpowers
         assert hasattr(self, 'q'), "Must first compute_q()"
@@ -308,7 +306,6 @@ class QE:
         self.V
         """
         # compute bandpower covariance
-        self._check_type(C_data)
         assert hasattr(self, 'E'), "Must first run compute_MW()"
         if C_data is None:
             self.V = np.eye(self.spw_Nfreqs, dtype=np.complex)
