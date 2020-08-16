@@ -12,7 +12,7 @@ from . import utils
 
 class QE:
     
-    def __init__(self, freqs, x1, x2=None, C=None, spw=None, cosmo=None):
+    def __init__(self, freqs, x1, x2=None, C=None, spw=None, cosmo=None, Omega_Eff=None):
         """
         A simple quadratic estimator for 21 cm intensity mapping
         
@@ -31,14 +31,20 @@ class QE:
             Delineates spw channels for power spectrum estimation, of shape (start, stop) channel
             This is used for wideband GPR, where filtering is applied across all freqs
             but pspec estimation is over a subband. Default is the entire band.
-        cosmo : hera_pspec Cosmo_Conversions object
-            Adopted cosmology. Default is hera_pspec default.
+        cosmo : Cosmology object
+            Adopted cosmology. Default is utils.Cosmology default.
+        Omega_Eff : float
+            Used for normalizing power spectra.
+            Omega_Eff = Omega_p^2 / Omega_pp, where Omega_p is the sky
+            integral of the primary beam power [radians^2], and Omega_pp
+            is the sky integral of the squared primary beam power [radians^2].
+            See HERA Memo #27.
 
         Notes
         -----
         The code adopts the following defintions
 
-        c_a^n = e^{-2pi i a n / N}
+        c_a^n = e^{-2pi i a n / N}, (Nfreqs, 1)
         Q_a = c_a c_a^t
         uE_a = 0.5 R^t Q_a R
         H_ab = tr(uE_a Q_b)
@@ -61,11 +67,6 @@ class QE:
         self.freqs = freqs
         self.Nfreqs = len(freqs)
 
-        # power spectrum scalar normalization
-        if scalar is None:
-            scalar = 1
-        self.scalar = scalar
-
         # spectral window selection
         if spw is None:
             self.spw = slice(None)
@@ -83,6 +84,15 @@ class QE:
         self.avg_z = self.cosmo.f2z(self.avg_f * 1e6)
         self.t2k = self.cosmo.tau_to_kpara(self.avg_z)
         self.X2Y = self.cosmo.X2Y(self.avg_z)
+
+        # power spectrum scalar normalization
+        # see HERA Memo #27 and Appendix of Parsons et al. 2014
+        # the frequency-dependent taper is handled automatically by R
+        # so here B_pp = B_p, and scalar = X2Y * Omega_Eff * B_p
+        if Omega_Eff is not None:
+            self.scalar = self.X2Y * Omega_Eff * (self.spw_Nfreqs * self.dfreq)
+        else:
+            self.scalar = 1.0
 
         # bandpower k bins
         self.dlys = np.fft.fftshift(np.fft.fftfreq(self.spw_Nfreqs, np.diff(self.freqs)[0])) * 1e3
@@ -107,15 +117,12 @@ class QE:
         self._check_type(R)
         self.R = R[self.spw, :]
 
-    def compute_Q(self, Omega_Eff, prior=None):
+    def compute_Q(self, prior=None):
         """
         Compute Q = dC / dp, divided by normalization scalar
 
-        Omega_Eff : float
-            Omega_Eff = Omega_p^2 / Omega_pp, where Omega_p is the sky
-            integral of the primary beam power [radians^2], and Omega_pp
-            is the sky integral of the squared primary beam power [radians^2].
-            See Appendix of Parsons+2014
+        Parameters
+        ----------
         prior : ndarray (Ndelays,)
             Bandpower prior. Re-defines Q^prime_a = prior_a * Q_a
             And defines p^prime_a = p_a / prior_a
@@ -123,14 +130,13 @@ class QE:
         # number of band powers is spw_Nfreqs
         Nbps = self.spw_Nfreqs
 
-        # get DFT vectors, separable components of Q matrix
-        self.qft = np.fft.fftshift([np.fft.ifft(np.eye(Nbps), axis=-1)[i] for i in range(Nbps)], axes=0)
+        # get DFT vectors, separable components of Q matrix. !! This uses an inverse fft without 1 / N!!
+        self.qft = np.fft.fftshift([np.fft.ifft(np.eye(Nbps), axis=-1)[i] for i in range(Nbps)], axes=0) * Nbps
 
         # create Nbps x spw_Nfreqs x spw_Nfreqs Q matrix
         self.Q = np.array([_q[None, :].T.conj().dot(_q[None, :]) for _q in self.qft])
 
-        # divide by scalar normalization: cosmology X2Y, beam integral, and bandwidth
-        self.scalar = self.X2Y * Omega_Eff * self.spw_Nfreqs * self.dfreq
+        # divide by scalar normalization
         self.Q /= self.scalar
 
         # if R is not square, create a zero-padded Q matrix for computing H_ab = tr[R.T Q_a R Q_zpad_b]
