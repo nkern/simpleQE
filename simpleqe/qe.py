@@ -23,9 +23,9 @@ class QE:
         ----------
         freqs : ndarray (Nfreqs)
             frequency array of x in Hz
-        x1 : ndarray or hera_cal DataContainer (Ntimes, Nfreqs)
-             Complex visibility data as left-hand input for QE
-        x2 : ndarray or hera_cal DataContainer (Ntimes, Nfreqs)
+        x1 : ndarray (Ntimes, Nfreqs)
+             Complex visibility data [milli-Kelvin] as left-hand input for QE
+        x2 : ndarray (Ntimes, Nfreqs)
              Complex visibility data as right-hand input for QE
              Default is x1
         C : ndarray (Nfreqs, Nfreqs)
@@ -42,6 +42,7 @@ class QE:
             integral of the primary beam power [radians^2], and Omega_pp
             is the sky integral of the squared primary beam power [radians^2].
             See HERA Memo #27.
+            Default of None results in scalar = 1.0
 
         Notes
         -----
@@ -111,7 +112,7 @@ class QE:
         
         Parameters
         ----------
-        R : ndarray or DataContainer (Nfreqs, Nfreqs)
+        R : ndarray (Nfreqs, Nfreqs)
 
         Results
         -------
@@ -158,13 +159,9 @@ class QE:
                 self.Q_zpad[i] *= p
 
     def _compute_uE(self, R, Q):
-        if isinstance(R, DC):
-            return DC({k: self._compute_uE(R[k], Q) for k in R})
         return 0.5 * np.array([R.T.conj() @ Qa @ R for Qa in Q])
 
     def _compute_H(self, uE, Q_zpad):
-        if isinstance(uE, DC):
-            return DC({k: self._compute_H(uE[k], Q_zpad) for k in uE})
         return np.array([[np.trace(uEa @ Qb) for Qb in Q_zpad] for uEa in uE])
 
     def compute_H(self, enforce_real=True):
@@ -194,8 +191,6 @@ class QE:
             self.H = self.H.real
 
     def _compute_q(self, x1, x2, uE):
-        if isinstance(x1, DC):
-            return DC({k: self._compute_q(x1[k], x2[k], uE[k]) for k in x1})
         # this is x1^dagger uE x2, but looks weird due to shape of x1, x2
         return np.array([np.diagonal(x1.conj() @ uEa @ x2.T) for uEa in uE])
 
@@ -213,8 +208,6 @@ class QE:
         self.q = self._compute_q(self.x1, self.x2, self.uE)
 
     def _compute_M(self, norm, H):
-        if isinstance(H, DC):
-            return DC({k: self._compute_M(norm, H[k]) for k in H})
         if norm == 'I':
             Hsum = np.sum(H, axis=1)
             return np.diag(1. / Hsum) * self.scalar
@@ -232,18 +225,12 @@ class QE:
             raise ValueError("{} not recognized".format(norm))
 
     def _compute_W(self, M, H):
-        if isinstance(M, DC):
-            return DC({k: self._compute_W(M[k], H[k]) for k in M})
         return M @ H
     
     def _compute_E(self, M, uE):
-        if isinstance(M, DC):
-            return DC({k: self._compute_E(M[k], uE[k]) for k in M})
         return np.array([np.sum(m[:, None, None] * uE, axis=0) for m in M])
 
     def _compute_b(self, C, E):
-        if isinstance(C, DC):
-            return DC({k: self._compute_b(C[k], E[k]) for k in C})
         return np.array([np.trace(C @ Ea) for Ea in E])
     
     def compute_MW(self, norm='I'):
@@ -270,8 +257,6 @@ class QE:
         self.E = self._compute_E(self.M, self.uE)
 
     def _compute_p(self, M, q):
-        if isinstance(M, DC):
-            return DC({k: self._compute_p(M[k], q[k]) for k in M})
         return M @ q
 
     def compute_p(self, C_bias=None):
@@ -281,7 +266,7 @@ class QE:
         
         Parameters
         ----------
-        C_bias : ndarray or DataContainer (Nfreqs, Nfreqs), optional
+        C_bias : ndarray (Nfreqs, Nfreqs), optional
             Data covariance for bias term.
             Default is no bias term.
             
@@ -302,8 +287,6 @@ class QE:
             self.b = np.zeros_like(self.p)
 
     def _compute_V(self, C, E):
-        if isinstance(C, DC):
-            return DC({k: self._compute_V(C[k], E[k]) for k in C})
         # compute C @ Ea once
         CE = [C @ Ea for Ea in E]
         # compute all cross terms
@@ -316,7 +299,7 @@ class QE:
 
         Parameters
         ----------
-        C_data : ndarray or DataContainer (Nfreqs, Nfreqs), optional
+        C_data : ndarray (Nfreqs, Nfreqs), optional
             Data covariance for errorbar estimation.
             Default is self.C
 

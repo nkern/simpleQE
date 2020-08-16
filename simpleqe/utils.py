@@ -171,24 +171,23 @@ class Cosmology(FlatLambdaCDM):
         float
             Conversion factor [Mpc^-1 / seconds]
         """
-        # Parsons 2012, Pober 2014, Kohn 2018
         return 2 * np.pi / self.dRpara_df(z)
 
 
-def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, ffac=1, efac=1, nfac=1,
-             data_spw=None, pspec_spw=None, seed=0, scalar=None):
-    """Generate mock dataset
+def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mult=1,
+             data_spw=None, pspec_spw=None, seed=0, Omega_Eff=None):
+    """Generate mock dataset and return QE objects
 
     Parameters
     ----------
     freqs : ndarray
-        Frequency array in MHz
+        Frequency array in Hz
     Kfg : callable
-        Input freqs, output foreground cov ndarray, (Nfreqs, NFreqs)
+        Input freqs[:, None], output foreground cov ndarray
     Kfg : callable
-        Input freqs, output EoR cov ndarray, (Nfreqs, NFreqs)
+        Input freqs[:, None], output EoR cov ndarray
     Knoise : callable
-        Input freqs, output noise cov ndarray, (Nfreqs, NFreqs)
+        Input freqs[:, None], output noise cov ndarray
     Ntimes : int
         Number of times. Each sample is an independent draw.
     fg_mult : float
@@ -203,6 +202,8 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, ffac=1, efac=1, nfac=1,
         Sets spectral window of pspec estimation from input freqs
     seed : int
         Random seed to set before drawing data
+    Omega_Eff : float
+        Effective primary beam area, see HERA Memo #27
 
     Returns
     -------
@@ -218,9 +219,9 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, ffac=1, efac=1, nfac=1,
     from simpleqe import QE
     if data_spw is None:
         data_spw = slice(None)
-    Kf = Kfg(freqs[:, None]) * ffac
-    Ke = Keor(freqs[:, None]) * efac
-    Kn = Knoise(freqs[:, None]) * nfac
+    Kf = Kfg(freqs[:, None]) * fg_mult
+    Ke = Keor(freqs[:, None]) * eor_mult
+    Kn = Knoise(freqs[:, None]) * noise_mult
     
     np.random.seed(seed)
     mean = np.zeros_like(freqs)
