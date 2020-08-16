@@ -122,7 +122,7 @@ class QE:
 
     def compute_Q(self, prior=None):
         """
-        Compute Q = dC / dp, divided by normalization scalar
+        Compute Q = dC / dp
 
         Parameters
         ----------
@@ -139,9 +139,6 @@ class QE:
 
         # create Nbps x spw_Nfreqs x spw_Nfreqs Q matrix
         self.Q = np.array([_q[None, :].T.conj().dot(_q[None, :]) for _q in self.qft])
-
-        # divide by scalar normalization
-        self.Q /= self.scalar
 
         # if R is not square, create a zero-padded Q matrix for computing H_ab = tr[R.T Q_a R Q_zpad_b]
         # if R is square, self.Q_zpad = self.Q
