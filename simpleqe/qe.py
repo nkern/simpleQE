@@ -130,6 +130,7 @@ class QE:
             Bandpower prior. Re-defines Q^prime_a = prior_a * Q_a
             And defines p^prime_a = p_a / prior_a
         """
+        # compute Q = dC/dp
         # number of band powers is spw_Nfreqs
         Nbps = self.spw_Nfreqs
 
@@ -179,9 +180,10 @@ class QE:
         -------
         self.uE, self.H
         """
-        # compute Q = dC/dp
         if not hasattr(self, 'R'):
             raise ValueError("No R matrix attached to object")
+        if not hasattr(self, 'Q'):
+            raise ValueError("Must first run compute_Q")
 
         # compute un-normed E and then H
         self.uE = self._compute_uE(self.R, self.Q)
@@ -203,7 +205,7 @@ class QE:
         self.q
         """
         if not hasattr(self, 'H'):
-            raise ValueError("Must first compute_H")
+            raise ValueError("Must first run compute_H")
         self.q = self._compute_q(self.x1, self.x2, self.uE)
 
     def _compute_M(self, norm, H):
@@ -248,7 +250,7 @@ class QE:
         self.norm = norm
         self.kp_mag = np.abs(self.kp)
         # get normalization matrix
-        assert hasattr(self, 'H'), "Must self.compute_H first"
+        assert hasattr(self, 'H'), "Must first run compute_H"
         self.M = self._compute_M(norm, self.H)
         # compute window functions
         self.W = self._compute_W(self.M, self.H) / self.scalar
@@ -262,21 +264,21 @@ class QE:
         """
         Compute normalized bandpowers and bias term.
         Must first compute_q(), and compute_MW()
-        
+
         Parameters
         ----------
         C_bias : ndarray (Nfreqs, Nfreqs), optional
             Data covariance for bias term.
             Default is no bias term.
-            
+
         Results
         -------
         self.p, self.b
         """
         self.kp_mag = np.abs(self.kp)
         # compute normalized bandpowers
-        assert hasattr(self, 'q'), "Must first compute_q()"
-        assert hasattr(self, "M"), "Must first compute_MW()"
+        assert hasattr(self, 'q'), "Must first run compute_q()"
+        assert hasattr(self, "M"), "Must first run compute_MW()"
         self.p = self._compute_p(self.M, self.q)
         # compute bias term
         if C_bias is not None:

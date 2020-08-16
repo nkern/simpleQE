@@ -175,7 +175,7 @@ class Cosmology(FlatLambdaCDM):
 
 
 def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mult=1,
-             data_spw=None, pspec_spw=None, seed=0, Omega_Eff=None):
+             data_spw=None, pspec_spw=None, seed=0, cosmo=None, Omega_Eff=None):
     """Generate mock dataset and return QE objects
 
     Parameters
@@ -202,6 +202,8 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
         Sets spectral window of pspec estimation from input freqs
     seed : int
         Random seed to set before drawing data
+    cosmo : Cosmology object
+        Default is utils.Cosmology() default.
     Omega_Eff : float
         Effective primary beam area, see HERA Memo #27
 
@@ -222,7 +224,7 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
     Kf = Kfg(freqs[:, None]) * fg_mult
     Ke = Keor(freqs[:, None]) * eor_mult
     Kn = Knoise(freqs[:, None]) * noise_mult
-    
+
     np.random.seed(seed)
     mean = np.zeros_like(freqs)
     f = np.atleast_2d(mn.rvs(mean, Kf/2, Ntimes) + 1j * mn.rvs(mean, Kf/2, Ntimes))[:, data_spw]
@@ -232,10 +234,14 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
     x1 = f + e + n1
     x2 = f + e + n2
     
-    D = QE(freqs[data_spw], x1, x2=x2, C=(Kf + Ke + Kn)[data_spw, data_spw], spw=pspec_spw)
-    F = QE(freqs[data_spw], f, C=Kf[data_spw, data_spw], spw=pspec_spw)
-    E = QE(freqs[data_spw], e, C=Ke[data_spw, data_spw], spw=pspec_spw)
-    N = QE(freqs[data_spw], n1, x2=n2, C=Kn[data_spw, data_spw], spw=pspec_spw)
+    D = QE(freqs[data_spw], x1, x2=x2, C=(Kf + Ke + Kn)[data_spw, data_spw], spw=pspec_spw,
+           cosmo=cosmo, Omega_Eff=Omega_Eff)
+    F = QE(freqs[data_spw], f, C=Kf[data_spw, data_spw], spw=pspec_spw,
+           cosmo=cosmo, Omega_Eff=Omega_Eff)
+    E = QE(freqs[data_spw], e, C=Ke[data_spw, data_spw], spw=pspec_spw,
+           cosmo=cosmo, Omega_Eff=Omega_Eff)
+    N = QE(freqs[data_spw], n1, x2=n2, C=Kn[data_spw, data_spw], spw=pspec_spw,
+           cosmo=cosmo, Omega_Eff=Omega_Eff)
     
     return D, F, E, N
 
