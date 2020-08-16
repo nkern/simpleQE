@@ -11,6 +11,9 @@ from . import utils
 
 
 class QE:
+    """
+    A simple quadratic estimator for 21 cm intensity mapping
+    """
     
     def __init__(self, freqs, x1, x2=None, C=None, spw=None, cosmo=None, Omega_Eff=None):
         """
@@ -19,7 +22,7 @@ class QE:
         Parameters
         ----------
         freqs : ndarray (Nfreqs)
-            frequency array of x in MHz
+            frequency array of x in Hz
         x1 : ndarray or hera_cal DataContainer (Ntimes, Nfreqs)
              Complex visibility data as left-hand input for QE
         x2 : ndarray or hera_cal DataContainer (Ntimes, Nfreqs)
@@ -81,7 +84,7 @@ class QE:
         else:
             self.cosmo = cosmo
         self.avg_f = np.mean(freqs)
-        self.avg_z = self.cosmo.f2z(self.avg_f * 1e6)
+        self.avg_z = self.cosmo.f2z(self.avg_f)
         self.t2k = self.cosmo.tau_to_kpara(self.avg_z)
         self.X2Y = self.cosmo.X2Y(self.avg_z)
 
@@ -95,7 +98,7 @@ class QE:
             self.scalar = 1.0
 
         # bandpower k bins
-        self.dlys = np.fft.fftshift(np.fft.fftfreq(self.spw_Nfreqs, np.diff(self.freqs)[0])) * 1e3
+        self.dlys = np.fft.fftshift(np.fft.fftfreq(self.spw_Nfreqs, np.diff(self.freqs)[0])) * 1e9
         self.kp = self.dlys * self.t2k / 1e9
         self.kp_mag = np.abs(self.kp)
 
