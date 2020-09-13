@@ -120,7 +120,7 @@ class QE:
         """
         self.R = R[self.spw, :]
 
-    def compute_Q(self, prior=None):
+    def compute_Q(self, prior=None, bp_thin=None):
         """
         Compute Q = dC / dp
 
@@ -129,13 +129,19 @@ class QE:
         prior : ndarray (Ndelays,)
             Bandpower prior. Re-defines Q^prime_a = prior_a * Q_a
             And defines p^prime_a = p_a / prior_a
+        bp_thin : int
+            If not None, decimate the band power k values by this amount.
+            Eg. bp_dlys = dlys[::bp_thin]
         """
         # compute Q = dC/dp
         # number of band powers is spw_Nfreqs
-        Nbps = self.spw_Nfreqs
+        if bp_thin is None:
+            bp_thin = 1
+        Nbps = int(np.ceil(self.spw_Nfreqs / bp_thin))
 
         # get DFT vectors, separable components of Q matrix. !! This uses an inverse fft without 1 / N!!
-        self.qft = np.fft.fftshift([np.fft.ifft(np.eye(Nbps), axis=-1)[i] for i in range(Nbps)], axes=0) * Nbps
+        self.qft = np.fft.ifft(np.eye(self.spw_Nfreqs), axis=-1)[::bp_thin, :] * self.spw_Nfreqs
+        self.qft = np.fft.fftshift(self.qft, axes=0)
 
         # create Nbps x spw_Nfreqs x spw_Nfreqs Q matrix
         self.Q = np.array([_q[None, :].T.conj().dot(_q[None, :]) for _q in self.qft])
@@ -205,15 +211,20 @@ class QE:
             raise ValueError("Must first run compute_H")
         self.q = self._compute_q(self.x1, self.x2, self.uE)
 
-    def _compute_M(self, norm, H):
+    def _compute_M(self, norm, H, pinv=False, rcond=1e-15):
         if norm == 'I':
             Hsum = np.sum(H, axis=1)
             return np.diag(1. / Hsum) * self.scalar
             #return np.diag(np.true_divide(1.0, Fsum, where=~np.isclose(Fsum, 0, atol=1e-15)))
         elif norm == 'H^-1':
-            return np.linalg.inv(H) * self.scalar
+            if pinv:
+                return np.linalg.pinv(H, rcond=rcond) * self.scalar
+            else:
+                return np.linalg.inv(H) * self.scalar
         elif norm == 'H^-1/2':
             u,s,v = np.linalg.svd(H)
+            truncate = s > (s.max() * rcond)
+            u, s, v = u[:, truncate], s[truncate], v[truncate, :]
             M = v.T.conj() @ np.diag(1/np.sqrt(s)) @ u.T.conj()
             W = M @ H
             # normalize
@@ -231,7 +242,7 @@ class QE:
     def _compute_b(self, C, E):
         return np.array([np.trace(C @ Ea) for Ea in E])
     
-    def compute_MW(self, norm='I'):
+    def compute_MW(self, norm='I', pinv=False, rcond=1e-15):
         """
         Compute normalization and window functions
 
@@ -239,6 +250,13 @@ class QE:
         ----------
         norm : str, ['I', 'H^-1', 'H^-1/2']
             Bandpower normalization matrix type
+
+        pinv : bool
+            If True use pseudo-inverse in compute_M
+
+        rcond : float
+            Relative condition for truncation in pinv or
+            svd of norm='H^-1' or norm='H^-1/2'
 
         Results
         -------
@@ -248,7 +266,7 @@ class QE:
         self.kp_mag = np.abs(self.kp)
         # get normalization matrix
         assert hasattr(self, 'H'), "Must first run compute_H"
-        self.M = self._compute_M(norm, self.H)
+        self.M = self._compute_M(norm, self.H, pinv=pinv, rcond=rcond)
         # compute window functions
         self.W = self._compute_W(self.M, self.H) / self.scalar
         # compute normalized E matrix

@@ -175,7 +175,7 @@ class Cosmology(FlatLambdaCDM):
 
 
 def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mult=1,
-             data_spw=None, pspec_spw=None, seed=0, cosmo=None, Omega_Eff=None):
+             ind_noise=True, data_spw=None, pspec_spw=None, seed=0, cosmo=None, Omega_Eff=None):
     """Generate mock dataset and return QE objects
 
     Parameters
@@ -196,6 +196,9 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
         Multiplier of eor covariance given input
     noise_mult : float
         Multiplier of noise covariance given input
+    ind_noise : bool
+        If True, draw two independent noise realizations and
+        assign as x1 and x2, else x2 is a copy of x1.
     data_spw : tuple or slice object
         Sets spectral window of data from input freqs
     pspec_spw : tupe or slice object
@@ -230,9 +233,12 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
     f = np.atleast_2d(mn.rvs(mean, Kf/2, Ntimes) + 1j * mn.rvs(mean, Kf/2, Ntimes))[:, data_spw]
     e = np.atleast_2d(mn.rvs(mean, Ke/2, Ntimes) + 1j * mn.rvs(mean, Ke/2, Ntimes))[:, data_spw]
     n1 = np.atleast_2d(mn.rvs(mean, Kn/2, Ntimes) + 1j * mn.rvs(mean, Kn/2, Ntimes))[:, data_spw]
-    n2 = np.atleast_2d(mn.rvs(mean, Kn/2, Ntimes) + 1j * mn.rvs(mean, Kn/2, Ntimes))[:, data_spw]
     x1 = f + e + n1
-    x2 = f + e + n2
+    if ind_noise:
+        n2 = np.atleast_2d(mn.rvs(mean, Kn/2, Ntimes) + 1j * mn.rvs(mean, Kn/2, Ntimes))[:, data_spw]
+        x2 = f + e + n2
+    else:
+        x2 = x1.copy()
     
     D = QE(freqs[data_spw], x1, x2=x2, C=(Kf + Ke + Kn)[data_spw, data_spw], spw=pspec_spw,
            cosmo=cosmo, Omega_Eff=Omega_Eff)
