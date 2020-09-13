@@ -77,6 +77,7 @@ class QE:
         else:
             self.spw = spw
         self.spw_Nfreqs = len(freqs[self.spw])
+        self.Nbps = self.spw_Nfreqs  # modified by self.compute_Q
         self.dfreq = np.diff(freqs)[0]
 
         # cosmology
@@ -133,6 +134,7 @@ class QE:
         if bp_thin is None:
             bp_thin = 1
         Nbps = int(np.ceil(self.spw_Nfreqs / bp_thin))
+        self.Nbps = Nbps
 
         # get DFT vectors, separable components of Q matrix. !! This uses an inverse fft without 1 / N!!
         self.qft = np.fft.ifft(np.eye(self.spw_Nfreqs), axis=-1)[::bp_thin, :] * self.spw_Nfreqs
@@ -325,7 +327,7 @@ class QE:
         # compute bandpower covariance
         assert hasattr(self, 'E'), "Must first run compute_MW()"
         if C_data is None:
-            self.V = np.eye(self.spw_Nfreqs, dtype=np.complex)
+            self.V = np.eye(self.Nbps, dtype=np.complex)
         else:
             self.V = self._compute_V(C_data, self.E)
 
