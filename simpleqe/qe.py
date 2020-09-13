@@ -98,11 +98,6 @@ class QE:
         else:
             self.scalar = 1.0
 
-        # bandpower k bins
-        self.dlys = np.fft.fftshift(np.fft.fftfreq(self.spw_Nfreqs, np.diff(self.freqs)[0])) * 1e9
-        self.kp = self.dlys * self.t2k / 1e9
-        self.kp_mag = np.abs(self.kp)
-
     def set_R(self, R):
         """
         Set weighting matrix for QE.
@@ -160,6 +155,11 @@ class QE:
             for i, p in enumerate(prior):
                 self.Q[i] *= p
                 self.Q_zpad[i] *= p
+
+        # bandpower k bins
+        self.dlys = np.fft.fftshift(np.fft.fftfreq(self.spw_Nfreqs, np.diff(self.freqs)[0]))[::bp_thin] * 1e9
+        self.kp = self.dlys * self.t2k / 1e9
+        self.kp_mag = np.abs(self.kp)
 
     def _compute_uE(self, R, Q):
         return 0.5 * np.array([R.T.conj() @ Qa @ R for Qa in Q])
