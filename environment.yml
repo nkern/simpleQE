@@ -9,3 +9,4 @@ dependencies:
   - future
   - scipy
   - h5py
+  - pytest
