@@ -20,6 +20,7 @@ install:
     - conda env update -n test-environment -f environment.yml
     - pip install -e .
     - conda activate test-environment
+    - conda env list
 before_script:
     - "export MPLBACKEND=agg"
 
