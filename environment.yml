@@ -10,3 +10,4 @@ dependencies:
   - scipy
   - h5py
   - pytest
+  - pytest-cov
