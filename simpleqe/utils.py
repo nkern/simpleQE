@@ -269,9 +269,9 @@ def interp_Wcdf(W, k):
     ndarray
         k of WF's 50th percentile
     ndarray
-        k of WF's 16th percentile
+        dk of WF's 16th percentile from median
     ndarray
-        k of WF's 84th percentile
+        dk of WF's 84th percentile from median
     """
     # get cdf: take sum of only abs(W)
     W = np.abs(W)

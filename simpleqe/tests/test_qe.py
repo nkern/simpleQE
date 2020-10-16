@@ -18,7 +18,7 @@ def prep_data(freqs, data_spw=None, pspec_spw=None, seed=None, ind_noise=True, N
     Cf = lambda x: utils.gauss_cov(x, 10.0, var=2e2)
     Ce = lambda x: utils.exp_cov(x, 1.0, var=1e-3)
     Cn = lambda x: utils.diag_cov(x, var=1e-2)
-    return utils.gen_data(freqs/1e6, Cf, Ce, Cn, Ntimes=Ntimes, data_spw=data_spw, pspec_spw=pspec_spw)
+    return utils.gen_data(freqs, Cf, Ce, Cn, Ntimes=Ntimes, data_spw=data_spw, pspec_spw=pspec_spw)
 
 
 def test_QE_object():

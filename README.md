@@ -1,5 +1,6 @@
 # simpleQE
 [![Build Status](https://travis-ci.com/nkern/simpleQE.svg?branch=master)](https://travis-ci.org/nkern/simpleQE)
+[![Coverage Status](https://coveralls.io/repos/github/nkern/simpleQE/badge.svg?branch=master)](https://coveralls.io/github/nkern/simpleQE?branch=master)
 
 A simple framework for power spectrum quadratic estimators
 
