@@ -8,3 +8,4 @@ dependencies:
   - six
   - future
   - scipy
+  - h5py
