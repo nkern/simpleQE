@@ -156,7 +156,7 @@ class QE:
             self.prior = prior
             for i, p in enumerate(prior):
                 self.Q[i] *= p
-                self.Q_zpad[i] *= p
+                self.Q_zpad[i] *= 1
 
         # bandpower k bins
         self.dlys = np.fft.fftshift(np.fft.fftfreq(self.spw_Nfreqs, np.diff(self.freqs)[0]))[::bp_thin] * 1e9

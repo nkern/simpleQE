@@ -6,6 +6,7 @@ import numpy as np
 import h5py
 import ast
 from scipy import signal
+import copy
 
 from simpleqe import qe, utils
 from simpleqe.data import DATA_PATH
@@ -31,6 +32,12 @@ def test_QE_object():
     D.compute_MWVp(norm='I', C_bias=F.C, C_data=D.C); D.compute_dsq()
     for p in ['p', 'V', 'b', 'W', 'p_sph', 'V_sph', 'b_sph', 'W_sph', 'dsq', 'dsq_b', 'dsq_V']:
         assert hasattr(D, p)
+
+    # try setting a prior
+    p0 = copy.deepcopy(D.p)
+    D.compute_Q(prior=np.ones(D.Nbps) * 10); D.compute_H(); D.compute_q()
+    D.compute_MWVp(norm='I', C_bias=F.C, C_data=D.C)
+    assert np.isclose(p0.real, D.p.real * 10).all()   # ensure old equals new * prior
 
 
 def normalization_test():
