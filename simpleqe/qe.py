@@ -14,7 +14,7 @@ class QE:
     """
     A simple quadratic estimator for 21 cm intensity mapping
     """
-    
+
     def __init__(self, freqs, x1, x2=None, C=None, spw=None, cosmo=None, Omega_Eff=None):
         """
         A simple quadratic estimator for 21 cm intensity mapping

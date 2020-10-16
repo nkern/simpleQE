@@ -291,3 +291,43 @@ def interp_Wcdf(W, k):
         hi_err.append(interp(0.84) - m)
 
     return np.array(med), np.array(low_err), np.array(hi_err)
+
+
+def gauss_cov(freqs, ell, var=1.0):
+    """
+    Gaussian covariance
+
+    Parameters
+    ----------
+    freqs : array-like, (Nfreqs,)
+    ell : float, length scale in units of freqs
+    var : float, variance
+    """
+    f = np.atleast_2d(freqs)
+    return var * np.exp(-0.5 * (f - f.T)**2 / ell**2)
+
+
+def exp_cov(freqs, ell, var=1.0):
+    """
+    Exponential covariance
+
+    Parameters
+    ----------
+    freqs : array-like, (Nfreqs,)
+    ell : float, length scale in units of freqs
+    var : float, variance
+    """
+    f = np.atleast_2d(freqs)
+    return var * np.exp(-np.abs(f-f.T) / ell)
+
+
+def diag_cov(freqs, var=1.0):
+    """
+    Diagonal covariance
+
+    Parameters
+    ----------
+    freqs : array-like, (Nfreqs,)
+    diag : float or array-like, variance of diagonal
+    """
+    return np.eye(len(freqs)) * var
