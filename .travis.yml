@@ -21,6 +21,7 @@ install:
     - pip install -e .
     - conda activate test-environment
     - conda env list
+    - python -c "import scipy; import h5py"
 before_script:
     - "export MPLBACKEND=agg"
 
