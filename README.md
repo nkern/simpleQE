@@ -1,7 +1,7 @@
 # simpleQE
+[![Build Status](https://travis-ci.com/nkern/simpleQE.svg?branch=master)](https://travis-ci.org/nkern/simpleQE)
 
-A simple framework for power spectrum quadratic estimation
-
+A simple framework for power spectrum quadratic estimators
 
 
 ## Installation
