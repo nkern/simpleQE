@@ -252,7 +252,7 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
     return D, F, E, N
 
 
-def interp_Wcdf(W, k):
+def interp_Wcdf(W, k, lower_perc=0.16, upper_perc=0.84):
     """
     Construct CDF from normalized window function and interpolate
     to get k at window func's 16, 50 & 84 percentile.
@@ -269,9 +269,9 @@ def interp_Wcdf(W, k):
     ndarray
         k of WF's 50th percentile
     ndarray
-        dk of WF's 16th percentile from median
+        dk of WF's 16th (default) percentile from median
     ndarray
-        dk of WF's 84th percentile from median
+        dk of WF's 84th (default) percentile from median
     """
     # get cdf: take sum of only abs(W)
     W = np.abs(W)
@@ -287,8 +287,8 @@ def interp_Wcdf(W, k):
         m = interp(0.5)  # 50th percentile
         #m = k[np.argmax(W[i])]  # mode
         med.append(m)
-        low_err.append(m - interp(0.16))
-        hi_err.append(interp(0.84) - m)
+        low_err.append(m - interp(lower_perc))
+        hi_err.append(interp(upper_perc) - m)
 
     return np.array(med), np.array(low_err), np.array(hi_err)
 
