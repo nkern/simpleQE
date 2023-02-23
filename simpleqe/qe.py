@@ -167,7 +167,10 @@ class QE:
         return 0.5 * np.array([R.T.conj() @ Qa @ R for Qa in Q])
 
     def _compute_H(self, uE, Q_zpad):
-        return np.array([[np.trace(uEa @ Qb) for Qb in Q_zpad] for uEa in uE])
+        # LEGACY: for loop probably uses less peak memory, but is a LOT slower than einsum
+        # the two implementations are the same up to 1e-5 in abs ratio
+        # return np.array([[np.trace(uEa @ Qb) for Qb in Q_zpad] for uEa in uE])
+        return np.einsum('ijk,lkj->il', uE, Q_zpad)
 
     def compute_H(self, enforce_real=True):
         """
