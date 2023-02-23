@@ -23,4 +23,4 @@ or
 Dependencies can be found in the `environment.yml` file.
 
 ## Getting Started
-See the `notebooks/getting_started.ipynb` for notes on getting started.
+See `notebooks/getting_started.ipynb` for notes on getting started.
