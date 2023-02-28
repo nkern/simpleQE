@@ -12,172 +12,216 @@ from . import utils
 
 class QE:
     """
-    A simple quadratic estimator for 21 cm intensity mapping
+    A simple quadratic estimator, assuming that the covariance
+    derivative Q = dC/dp is separable into the outer product Q = c c^T
+    and assuming each data dimension is separable (i.e. on a uniform,
+    rectangular grid).
     """
-
-    def __init__(self, freqs, x1, x2=None, C=None, spw=None, cosmo=None, Omega_Eff=None):
-        """
-        A simple quadratic estimator for 21 cm intensity mapping
-        
+    def __init__(self, x1, dx, x2=None, idx=None, scalar=None):
+        """        
         Parameters
         ----------
-        freqs : ndarray (Nfreqs)
-            frequency array of x in Hz
-        x1 : ndarray (Ntimes, Nfreqs)
-             Complex visibility data [milli-Kelvin] as left-hand input for QE
-        x2 : ndarray (Ntimes, Nfreqs)
-             Complex visibility data as right-hand input for QE
-             Default is x1
-        C : ndarray (Nfreqs, Nfreqs)
-            data covariance, used for errorbars
-        spw : tuple or slice object
-            Delineates spw channels for power spectrum estimation, of shape (start, stop) channel
-            This is used for wideband GPR, where filtering is applied across all freqs
-            but pspec estimation is over a subband. Default is the entire band.
-        cosmo : Cosmology object
-            Adopted cosmology. Default is utils.Cosmology default.
-        Omega_Eff : float
-            Used for normalizing power spectra.
-            Omega_Eff = Omega_p^2 / Omega_pp, where Omega_p is the sky
-            integral of the primary beam power [radians^2], and Omega_pp
-            is the sky integral of the squared primary beam power [radians^2].
-            See HERA Memo #27.
-            Default of None results in scalar = 1.0
-
+        x1 : ndarray (Npix1, Npix2, ..., Nother)
+            Data vector for LHS of QE, with Ndim data dimensions (Npix1, Npix2, ...)
+            and 1 final dimension to broadcast over (Nother,). E.g. (Nfreqs, 1)
+            for a visibility based estimator.
+        dx : list
+            Delta-x units for each Ndim data dimension in x1.
+            The Fourier convention is defined as 2pi/dx.
+        x2 : ndarray (Npix1, Npix2, ..., Nother), optional
+             Data vector for RHS of QE, with same convention as x1. Default is
+             to use x1.
+        idx : list of tuple or slice objects, optional
+            List of indexing objects for each data dimension of x1.
+            This allows you to specify a subset of pixels in each dimension
+            specifically for power spectrum estimation (i.e. a spectral window).
+            A wider bandwidth can be useful for specialized data weighting
+            (e.g. inverse covariance), while still estimating the pspec
+            over a narrower bandwidth.
+        scalar : float, optional
+            Overall normalization for power spectra.
+            E.g. for delay spectrum see HERA Memo #27.
+            Default is 1.
         Notes
         -----
         The code adopts the following defintions
 
-        c_a^n = e^{-2pi i a n / N}, (Nfreqs, 1)
-        Q_a = c_a c_a^t
-        uE_a = 0.5 R^t Q_a R
-        H_ab = tr(uE_a Q_b)
-        q_a = x_1^t uE_a x_2
-        M = H^-1/2 or propto I
-        E_a = M_ab uE_b
-        p_a = M_ab q_b = x_1^t E_a x_2
+        qft_a = e^{-2pi i a n / N}
+        qR_a = qft_a R
+        H_ab = 1/2 tr[qR_a^T qR_b]
+        q_a = 1/2 x1^T qR_a^T qR_a x2
+        M = H^-1 or H^-1/2 or propto I
+        p_a = M_ab q_b
         W = M H
+        E_a = 1/2 M_ab (qR_b^T qR_b)
         V_ab = 2 tr(C E_a C E_b)
         b_a = tr(C E_a)
         """
-        # assign data and metadata
-        # if x2 is not provided, just use x1
+        # assign data
+        if x1.ndim == 1:
+            x1 = x1.reshape(-1, 1)
         self.x1 = x1
+        self.Ndim = x1.ndim - 1
+        # if x2 is not provided, just use x1
         if x2 is None:
             self.x2 = x1
         else:
+            if x2.ndim == 1:
+                x2 = x2.reshape(-1, 1)
             self.x2 = x2
-        self.C = C
-        self.freqs = freqs
-        self.Nfreqs = len(freqs)
 
-        # spectral window selection
-        if spw is None:
-            self.spw = slice(None)
-        else:
-            self.spw = spw
-        self.spw_Nfreqs = len(freqs[self.spw])
-        self.Nbps = self.spw_Nfreqs  # modified by self.compute_Q
-        self.dfreq = np.diff(freqs)[0]
+        # assign metadata
+        assert len(dx) == self.Ndim, "x1 must be of shape Ndim+1, dx of shape Ndim"
+        self.dx = dx
+        self.idx = idx
+        self.scalar = scalar if scalar is not None else 1
 
-        # cosmology
-        if cosmo is None:
-            self.cosmo = utils.Cosmology()
-        else:
-            self.cosmo = cosmo
-        self.avg_f = np.mean(freqs)
-        self.avg_z = self.cosmo.f2z(self.avg_f)
-        self.t2k = self.cosmo.tau_to_kpara(self.avg_z)
-        self.X2Y = self.cosmo.X2Y(self.avg_z)
-
-        # power spectrum scalar normalization
-        # see HERA Memo #27 and Appendix of Parsons et al. 2014
-        # the frequency-dependent taper is handled automatically by R
-        # so here B_pp = B_p, and scalar = X2Y * Omega_Eff * B_p
-        if Omega_Eff is not None:
-            self.scalar = self.X2Y * Omega_Eff * (self.spw_Nfreqs * self.dfreq)
-        else:
-            self.scalar = 1.0
-
-    def set_R(self, R):
+    def set_R(self, R=None):
         """
-        Set weighting matrix for QE.
-        For proper OQE, this should be C^-1.
-        For wideband GPR, input R should be square,
-        which is then saved as R[self.spw, :]
-        
+        Set data weighting matrix.
+
         Parameters
         ----------
-        R : ndarray (Nfreqs, Nfreqs)
+        R : list of 2d arrays, optional
+            A list of length self.Ndim, holding
+            a matrix of shape (Npix_out, Npix_in)
+            for each data dimension in x1.
+            Default is identity weighting.
 
         Results
         -------
         self.R
         """
-        self.R = R[self.spw, :]
+        if R is None:
+            R = [np.eye(self.x1.shape[i]) for i in range(self.Ndim)]
+        if self.idx is not None:
+            R = [r[idx] for r, idx in zip(R, self.idx)]
 
-    def compute_Q(self, prior=None, bp_thin=None):
+        self.R = R
+
+    def compute_qft(self):
         """
-        Compute Q = dC / dp
+        Compute the column vector qft, which goes into
+        the outer product Q_a = qft_a qft_a^T for each
+        data dimension in self.x1
+
+        Note that we compute qft of shape (Nbp, Npix)
+        and we also compute a qft_pad of shape (Nbp, Npix+Npad)
+        where Npix is set by self.idx (i.e. indices over which
+        we estimate the power spectrum) and Npix+Npad are additional
+        (optional) pixels used in the R weighting step. qft_pad
+        is only needed if self.idx is used to select a subset
+        of pixels.
+        """
+        assert hasattr(self, 'R'), "Must first run set_R()"
+        # compute k-modes for each data dimension
+        shape = [R.shape for R in self.R]
+        self.k = [np.fft.fftshift(2*np.pi*np.fft.fftfreq(n[0], dx)) for n, dx in zip(shape, self.dx)]
+
+        # compute qft for each data dimension
+        self.qft = [np.fft.fft(np.eye(n[0])) for n in shape]
+        self.qft_pad = [np.pad(q, (n[1]-n[0])//2) for q, n in zip(self.qft, shape)]
+
+    def _compute_qR(self, qft, R):
+        """
+        Compute the product qft @ R
 
         Parameters
         ----------
-        prior : ndarray (Ndelays,)
-            Bandpower prior. Re-defines Q^prime_a = prior_a * Q_a
-            And defines p^prime_a = p_a / prior_a
-        bp_thin : int
-            If not None, decimate the band power k values by this amount.
-            Eg. bp_dlys = dlys[::bp_thin]
+        qft : list
+            A list of length self.Ndim holding
+            2D matrices of shape (Nbandpower, Npix)
+            for each data dimension in x1.
+        R : list
+            A list of length self.Ndim holding
+            the 2D weighting matrix for each
+            data dimension in x1
+
+        Returns
+        -------
+        list
         """
-        # compute Q = dC/dp
-        # number of band powers is spw_Nfreqs
-        if bp_thin is None:
-            bp_thin = 1
-        Nbps = int(np.ceil(self.spw_Nfreqs / bp_thin))
-        self.Nbps = Nbps
+        return [q @ r for q, r in zip(qft, R)]
 
-        # get DFT vectors, separable components of Q matrix. !! This uses an inverse fft without 1 / N!!
-        self.qft = np.fft.ifft(np.eye(self.spw_Nfreqs), axis=-1)[::bp_thin, :] * self.spw_Nfreqs
-        self.qft = np.fft.fftshift(self.qft, axes=0)
+    def compute_qR(self):
+        if not hasattr(self, 'qft'):
+            raise NameError("Must first run self.compute_qft()")
+        if not hasattr(self, 'R'):
+            raise NameError("Must first run self.set_R()")
+        self.qR = self._compute_qR(self.qft, self.R)
 
-        # create Nbps x spw_Nfreqs x spw_Nfreqs Q matrix
-        self.Q = np.array([_q[None, :].T.conj().dot(_q[None, :]) for _q in self.qft])
-
-        # if R is not square, create a zero-padded Q matrix for computing H_ab = tr[R.T Q_a R Q_zpad_b]
-        # if R is square, self.Q_zpad = self.Q
-        if self.Nfreqs == self.spw_Nfreqs:
-            self.Q_zpad = self.Q
-        else:
-            self.Q_zpad = np.zeros((Nbps, self.Nfreqs, self.Nfreqs), dtype=np.complex128)
-            self.Q_zpad[:, self.spw, self.spw] = self.Q
-
-        # set prior
-        if prior is not None:
-            self.prior = prior
-            for i, p in enumerate(prior):
-                self.Q[i] *= p
-                self.Q_zpad[i] *= 1
-
-        # bandpower k bins
-        self.dlys = np.fft.fftshift(np.fft.fftfreq(self.spw_Nfreqs, np.diff(self.freqs)[0]))[::bp_thin] * 1e9
-        self.kp = self.dlys * self.t2k / 1e9
-        self.kp_mag = np.abs(self.kp)
-
-    def _compute_uE(self, R, Q):
-        return 0.5 * np.array([R.T.conj() @ Qa @ R for Qa in Q])
-
-    def _compute_H(self, uE, Q_zpad):
-        # LEGACY: for loop probably uses less peak memory, but is a LOT slower than einsum
-        # the two implementations are the same up to 1e-5 in abs ratio
-        # return np.array([[np.trace(uEa @ Qb) for Qb in Q_zpad] for uEa in uE])
-        return np.einsum('ijk,lkj->il', uE, Q_zpad)
-
-    def compute_H(self, enforce_real=True):
+    def _compute_q(self, x1, qR, x2=None):
         """
-        Compute H_ab = tr[uE_a Q_b]
-        Also computes Q and uE.
-        For R = C^-1, H = F is the Fisher matrix
+        Compute the un-normalized bandpower
+        q = 0.5 x1^T R^T qft qft^T R x2
+
+        Parameters
+        ----------
+        x1 : ndarray
+            LHS of QE, of shape (Npix1, Npix2, ..., Nother)
+        qR : list of ndarray
+            List of shape Ndim where Ndim is number of Npix
+            dimensions in x1 (excluding Nother), holding
+            FT and weighting matrices.
+        x2 : ndarray, optional
+            RHS of QE, default is to use x1.
+
+        Returns
+        -------
+        ndarray of shape (Nbandpower1, Nbandpower2, ..., Nother)
+        """
+        es_str = 'abcdefgh'[:self.Ndim]
+        for i, qr in enumerate(qR):
+            str_in = es_str.replace(es_str[i], 'j')
+            str_out = es_str.replace(es_str[i], 'i')
+            x1 = np.einsum("ij,{}...->{}...".format(str_in, str_out), qr, x1)
+            if x2 is not None:
+                x2 = np.einsum("ij,{}...->{}...".format(str_in, str_out), qr, x2)
+
+        if x2 is None:
+            x2 = x1
+
+        return 0.5 * x1.conj() * x2
+
+    def compute_q(self):
+        """
+        Compute q: un-normalized band powers
         
+        Results
+        -------
+        self.q
+        """
+        if not hasattr(self, 'qR'):
+            raise NameError("Must first run self.compute_qR()")
+        self.q = self._compute_q(self.x1, self.qR, self.x2)
+
+    def _compute_H(self, qR, qft_pad):
+        """
+        Computes H matrix, mapping the true power spectrum
+        to un-normalized power spectrum.
+
+        q_a = H_ab p_b
+
+        Note that H need not be square, e.g. to oversample
+        the window functions in k space.
+
+        Note that we compute a single H matrix for each
+        data dimension in x1, i.e. for each element in self.qR
+
+        Each matrix in qR is shape AXM, while matrix in qft_pad is
+        shape BXM
+        """
+        H = []
+        for qr, qp in zip(qR, qft_pad):
+            H.append(0.5 * abs(np.einsum("am,bm->ab", qr, qp))**2)
+
+        return H
+
+    def compute_H(self):
+        """
+        Compute H_ab = 0.5 tr[R^T Q_a R Q_b]
+        For R = C^-1, H = F is the Fisher matrix
+
         Parameters
         ----------
         enforce_real : bool
@@ -186,211 +230,394 @@ class QE:
 
         Results
         -------
-        self.uE, self.H
+        self.H
         """
-        if not hasattr(self, 'R'):
-            raise ValueError("No R matrix attached to object")
-        if not hasattr(self, 'Q'):
-            raise ValueError("Must first run compute_Q")
+        if not hasattr(self, 'qft_prime'):
+            raise ValueError("First run compute_qft()")
+        if not hasattr(self, 'qR'):
+            raise ValueError("First run compute_qR()")
 
-        # compute un-normed E and then H
-        self.uE = self._compute_uE(self.R, self.Q)
-        self.H = self._compute_H(self.uE, self.Q_zpad)
-        if enforce_real:
-            self.H = self.H.real
+        self.H = self._compute_H(self.qR, self.qft_pad)
 
-    def _compute_q(self, x1, x2, uE):
-        # this is x1^dagger uE x2, but looks weird due to shape of x1, x2
-        return np.array([np.diagonal(x1.conj() @ uEa @ x2.T) for uEa in uE])
-
-    def compute_q(self):
-        """
-        Compute q: un-normalized band powers
-        Must first compute_H
-        
-        Results
-        -------
-        self.q
-        """
-        if not hasattr(self, 'H'):
-            raise ValueError("Must first run compute_H")
-        self.q = self._compute_q(self.x1, self.x2, self.uE)
-
-    def _compute_M(self, norm, H, pinv=False, rcond=1e-15):
+    def _compute_M(self, norm, H, rcond=1e-15, Wnorm=True):
         if norm == 'I':
-            Hsum = np.sum(H, axis=1)
-            return np.diag(1. / Hsum) * self.scalar
-            #return np.diag(np.true_divide(1.0, Fsum, where=~np.isclose(Fsum, 0, atol=1e-15)))
-        elif norm == 'H^-1':
-            if pinv:
-                return np.linalg.pinv(H, rcond=rcond) * self.scalar
-            else:
-                return np.linalg.inv(H) * self.scalar
-        elif norm == 'H^-1/2':
+            M = np.zeros(H.shape)
+            M[range(len(H)), np.argmax(H, axis=1)] = 1 / H.sum(axis=1)
+            M = M.T
+        elif norm in ['H^-1', 'H^-1/2']:
             u,s,v = np.linalg.svd(H)
-            truncate = s > (s.max() * rcond)
-            u, s, v = u[:, truncate], s[truncate], v[truncate, :]
-            M = v.T.conj() @ np.diag(1/np.sqrt(s)) @ u.T.conj()
-            W = M @ H
-            # normalize
-            M /= W.sum(axis=1)[:, None]
-            return M * self.scalar
+            truncate = np.where(s > (s.max() * rcond))[0]
+            u, s = u[:, truncate], s[truncate]
+            # we use u @ s @ u.T instead of v.T @ s @ u.T
+            # because we want to invert within the
+            # left space of H, not re-project back to
+            # right space of H. This only makes a difference
+            # if H is non-square.
+            if norm == 'H^-1':
+                M = u @ np.diag(1/s) @ u.T.conj()
+            elif norm == 'H^-1/2':
+                M = u @ np.diag(1/np.sqrt(s)) @ u.T.conj()
         else:
             raise ValueError("{} not recognized".format(norm))
 
+        if Wnorm:
+            # get window functions
+            W = M @ H
+
+            # ensure they are normalied
+            M /= abs(W.sum(axis=1, keepdims=True)).clip(1e-20)
+
+        return M * self.scalar
+
     def _compute_W(self, M, H):
         return M @ H
-    
-    def _compute_E(self, M, uE):
-        return np.array([np.sum(m[:, None, None] * uE, axis=0) for m in M])
 
-    def _compute_b(self, C, E):
-        return np.array([np.trace(C @ Ea) for Ea in E])
-    
-    def compute_MW(self, norm='I', pinv=False, rcond=1e-15):
+    def compute_MW(self, norm='I', rcond=1e-15, Wnorm=True):
         """
-        Compute normalization and window functions
+        Compute normalization and window functions.
+        For H^-1 and H^-1/2, uses SVD pseudoinverse.
 
         Parameters
         ----------
         norm : str, ['I', 'H^-1', 'H^-1/2']
             Bandpower normalization matrix type
-
-        pinv : bool
-            If True use pseudo-inverse in compute_M
-
         rcond : float
-            Relative condition for truncation in pinv or
-            svd of norm='H^-1' or norm='H^-1/2'
+            Relative condition for truncation
+            of svd for norm='H^-1' or norm='H^-1/2'
+        Wnorm : bool, optional
+            If True, normalize W such that rows sum to unity
 
         Results
         -------
-        self.M, self.W, self.uE
+        self.M, self.W
         """
         self.norm = norm
-        self.kp_mag = np.abs(self.kp)
         # get normalization matrix
         assert hasattr(self, 'H'), "Must first run compute_H"
-        self.M = self._compute_M(norm, self.H, pinv=pinv, rcond=rcond)
+        self.M = [self._compute_M(norm, H, rcond=rcond, Wnorm=Wnorm) for H in self.H]
+
         # compute window functions
-        self.W = self._compute_W(self.M, self.H) / self.scalar
-        # compute normalized E matrix
-        self.E = self._compute_E(self.M, self.uE)
+        self.W = [self._compute_W(M, H) for M, H in zip(self.M, self.H)]
 
     def _compute_p(self, M, q):
-        return M @ q
+        """
+        Compute the normalized bandpower
+        p = M q
 
-    def compute_p(self, C_bias=None):
+        Parameters
+        ----------
+        M : list of ndarray
+            List holding 2D matrix of shape (Nbp, Nbp)
+            for each bandpower dimension in self.q
+        q : ndarray
+            Un-normalized bandpower array of shape
+            (Nbandpower1, Nbandpower2, ..., Nother)
+
+        Returns
+        -------
+        ndarray of shape (Nbandpower1, Nbandpower2, ..., Nother)
+        """
+        es_str = 'abcdefgh'[:self.Ndim]
+        p = q
+        for i, m in enumerate(M):
+            str_in = es_str.replace(es_str[i], 'j')
+            str_out = es_str.replace(es_str[i], 'i')
+            p = np.einsum("ij,{}...->{}...".format(str_in, str_out), m, p)
+
+        return p
+
+    def _compute_b(self, C, M, qR, rcond=1e-15):
+        """
+        Compute bias of normalized power spectrum
+
+        Parameters
+        ----------
+        C : list of ndarray
+            List holding a 2D covariance matrix of shape
+            (Npix, Npix) for each data dimension in x1.
+        M : list of ndarray
+            List holding 2D matrix of shape (Nbp, Nbp)
+            for each data dimension in x1.
+        qR : list of ndarray
+            List holding 2D qft @ R matrix of shape (Nbp, Npix)
+            for each data dimension in x1.
+        rcond : float
+            Relative condition when decomposing C
+            via svd
+
+        Returns
+        -------
+        ndarray of shape self.q
+        """
+        # iterate over data dimensions
+        b = np.zeros(self.x1.shape, dtype=float)
+        if C is not None:
+            for i, (c, m, qr) in enumerate(zip(C, M, qR)):
+                # decompose matrix c into A A^T
+                u, s, v = np.linalg.svd(c, hermitian=True)
+                keep = s > s.max() * rcond
+                A = u[:, keep] * np.diag(np.sqrt(s[keep]))
+
+                # compute qr A
+                qrA = np.einsum("ij,jk->ik" qr, A)
+
+                # take abs sum to get un-normalized bias
+                ub = 0.5 * (abs(qrA)**2).sum(-1)
+
+                # normalize
+                nb = m @ ub
+
+                # sum bias terms
+                bshape = [1 for j in range(b.ndim)]
+                bshape[i] = -1
+                b += nb.reshape(bshape)
+
+        return b
+
+    def compute_p(self, C_bias=None, rcond=1e-15):
         """
         Compute normalized bandpowers and bias term.
         Must first compute_q(), and compute_MW()
 
         Parameters
         ----------
-        C_bias : ndarray (Nfreqs, Nfreqs), optional
-            Data covariance for bias term.
-            Default is no bias term.
+        C_bias : list of ndarray, optional
+            Bias covariance for each data dimension
+            in x1. Default is zero bias.
+        rcond : float
+            Relative condition when decomposing C
+            via svd
 
         Results
         -------
         self.p, self.b
         """
-        self.kp_mag = np.abs(self.kp)
         # compute normalized bandpowers
         assert hasattr(self, 'q'), "Must first run compute_q()"
         assert hasattr(self, "M"), "Must first run compute_MW()"
         self.p = self._compute_p(self.M, self.q)
+
         # compute bias term
-        if C_bias is not None:
-            self.b = self._compute_b(C_bias, self.E)[:, None]
-        else:
-            self.b = np.zeros_like(self.p)
+        self.b = self._compute_b(C_bias, self.M, self.qR, rcond=rcond)
 
-    def _compute_V(self, C, E):
-        # compute C @ Ea once
-        CE = [C @ Ea for Ea in E]
-        # compute all cross terms
-        return 2 * np.array([[np.trace(CEa @ CEb) for CEb in CE] for CEa in CE])
+    def _compute_V(self, C, M, qR, diag=True):
+        """
+        Compute bandpower covariance
 
-    def compute_V(self, C_data=None):
+        2 tr[C E_a C E_b]
+        
+        where E_a = 1/2 M_ab R^T Q_b R
+
+        Parameters
+        ----------
+        C : list of ndarray
+            List holding a 2D covariance matrix of shape
+            (Npix, Npix) for each data dimension in x1.
+        M : list of ndarray
+            List holding 2D matrix of shape (Nbp, Nbp)
+            for each data dimension in x1.
+        qR : list of ndarray
+            List holding 2D qft @ R matrix of shape (Nbp, Npix)
+            for each data dimension in x1.
+        diag : bool, optional
+            If True, only compute diagonal of
+            bandpower covariance. Otherwise compute
+            off-diagonal as well.
+        Returns
+        -------
+        ndarray
+        """
+        V = None
+        if C is not None:
+            V = []
+            for i, (c, m, qr) in enumerate(zip(C, M, qR)):
+                # compute un-normalized E: qR outer product
+                ue = 0.5 * np.einsum("ij,ik->ijk", qR, qR.conj())
+
+                # compute normalized E
+                e = np.einsum("ij,jkl->ikl", m, ue)
+
+                # dot into covariance
+                ec = np.einsum("ij,jkl->ikl", c, e)
+
+                if diag:
+                    # compute just variance
+                    v = np.diag(np.einsum("ijk,ijk->i", ec, ec))
+
+                else:
+                    # compute full covariance
+                    v = np.einsum("ijk,ljk->il", ec, ec)
+
+
+                V.append(v)
+
+        return V
+
+    def compute_V(self, C=None, rcond=1e-15, diag=True):
         """
         Compute bandpower covariance.
         Must run compute_MW() first.
 
         Parameters
         ----------
-        C_data : ndarray (Nfreqs, Nfreqs), optional
-            Data covariance for errorbar estimation.
-            Default is self.C
+        C : list of ndarray
+            List holding a 2D covariance matrix of shape
+            (Npix, Npix) for each data dimension in x1.
+        rcond : float
+            Relative condition when decomposing C
+            via svd.
+        diag : bool, optional
+            If True, only compute diagonal of
+            bandpower covariance. Otherwise compute
+            off-diagonal as well.
 
         Results
         -------
         self.V
         """
         # compute bandpower covariance
-        assert hasattr(self, 'E'), "Must first run compute_MW()"
-        if C_data is None:
-            self.V = np.eye(self.Nbps, dtype=np.complex)
-        else:
-            self.V = self._compute_V(C_data, self.E)
+        self.V = self._compute_V(C, self.M, self.qR,
+                                 rcond=rcond, diag=diag)
 
-    def spherical_average(self, kp_sph=None):
+    def average_bandpowers(self, k_avg=None, axis=None):
         """
-        Spherical average onto |k| axis
+        Average the computed normalized bandpowers
+        and their associated metadata (e.g. covariances
+        and window functions).
+
+        Note that a single call to this function averages
+        the first two data dimensions in self.p
+        (or self.p_avg if it exists). To get successive averages,
+        (e.g. 3D->1D average) make successive calls to this function.
 
         Parameters
         ----------
-        kp_sph : ndarray of k values. Default is |self.kp|
+        k_avg : ndarray
+            mag(k) to average onto.
+        axis : int, optional
+            If None, perform average of first two dimensions
+            of self.p (self.p_avg).
+            If provided, only average this axis onto k_avg
+            (e.g. this is used for folding the power spectra).
 
-        p_cyl = A p_sph
-        p_sph = [A.T C_cyl^-1 A]^-1 A.T C_cyl^-1 p_cyl
-        C_sph = [A.T C_cyl^-1 A]^-1
-        W_sph = [A.T C_cyl^-1 A]^-1 A.T C_cyl^-1 W_cyl A
+        Notes
+        -----
+        p_xyz = A p_avg
+        p_avg = [A.T C_xyz^-1 A]^-1 A.T C_xyz^-1 p_xyz
+        C_avg = [A.T C_xyz^-1 A]^-1
+        W_avg = [A.T C_xyz^-1 A]^-1 A.T C_xyz^-1 W_xyz A
         """
-        # identity weighting if no errors
-        if not hasattr(self, 'V'):
-            self.V = np.eye(self.p.shape[0])
+        assert hasattr(self, 'p'), "Must run self.compute_p()"
+        assert hasattr(self, 'V'), "Must run self.compute_V()"
 
-        if kp_sph is None:
-            self.kp_sph = np.unique(np.abs(self.kp))
+        # get initial arrays
+        pi = self.p if not hasattr(self, 'p_avg') else self.p_avg
+        bi = self.b if not hasattr(self, 'p_avg') else self.b_avg
+        Vi = self.V if not hasattr(self, 'p_avg') else self.V_avg
+        Wi = self.W if not hasattr(self, 'p_avg') else self.W_avg
+        ki = self.k if not hasattr(self, 'p_avg') else self.k_avg
+        s = pi.shape
+        assert pi.ndim > 2, "Cannot average p further"
+
+        # 
+        if axis is None:
+            # averaging first two dimensions: unravel first two dimensions
+            p = pi.reshape(s[0]*s[1], *s[2:])
+            b = bi.reshape(s[0]*s[1], *s[2:])
+
+            # stack matrices to match unraveled dimensions
+            V = np.kron(Vi[0], Vi[1])  # TODO: this is not correct, V should preserve units of p^2
+            W = np.kron(Wi[0], Wi[1])
+            K = np.meshgrid(ki[0], ki[1])
+            k = np.sqrt(K[0].ravel()**2 + K[1].ravel()**2)
+
+            # get k_avg points
+            if k_avg is None:
+                k_avg = np.linspace(k.min(), k.max(), max(K.shape)//2)
+
         else:
-            self.kp_sph = kp_sph
+            # otherwise, we are folding this axis
+            assert axis < pi.ndim
+            p = pi.moveaxis(axis, 0)
+            b = bi.moveaxis(axis, 0)
+            V = Vi[axis]
+            W = Wi[axis]
+            k = abs(ki[axis])
 
-        # construct A matrix
-        A = np.zeros((len(self.kp), len(self.kp_sph)))
-        for i, k in enumerate(self.kp):
-            A[i, np.argmin(np.abs(self.kp_sph - np.abs(k)))] = 1.0
+            if k_avg is None:
+                k_avg = np.unique(k)
 
-        # get p_sph
-        Vinv = np.linalg.inv(self.V)
+        # construct A matrix: p_xyz = A @ p_avg
+        # note: we use 1D linear interpolation between two nearest k_avg modes
+        # to map p_avg -> p_xyz
+        # linear interpolation between (x0, y0) & (x1, y1) at xp is:
+        # yp = y0 * (x1-xp) / (x1-x0) + y1 * (xp - x0) / (x1-x0)
+        A = np.zeros((len(k), len(k_avg)), dtype=float)
+        for i, _k in enumerate(k):
+            # for each raveled k, get two nearest k_avg modes
+            nn = sort(np.argsort(np.abs(k_avg - _k))[:2])
+
+            # get linear interpolation weights
+            denom = (k_avg[nn[1]] - k_avg[nn[0]])
+            A[i, nn[0]] = (k_avg[nn[1]] - _k) / denom
+            A[i, nn[1]] = (k_avg[nn[0]] - _k) / denom
+
+        # compute inverse matrices
+        Vinv = np.linalg.pinv(V)
         AtVinv = A.T @ Vinv
-        AtVinvAinv = np.linalg.inv(AtVinv @ A)
-        self.p_sph = AtVinvAinv @ AtVinv @ self.p
-        self.b_sph = AtVinvAinv @ AtVinv @ self.b
-        
-        # get V_sph
-        self.V_sph = AtVinvAinv
+        AtVinvAinv = np.linalg.pinv(AtVinv @ A)
 
-        # get W_sph
-        self.W_sph = AtVinvAinv @ AtVinv @ self.W @ A
+        # get averaged quantities
+        p_avg = AtVinvAinv @ AtVinv @ p
+        b_avg = AtVinvAinv @ AtVinv @ b
+        V_avg = AtVinvAinv
+        W_avg = AtVinvAinv @ AtVinv @ W @ A
 
-    def compute_MWVp(self, norm='I', C_data=None, C_bias=None, sph_avg=True, kp_sph=None):
+        if axis is None:
+            self.p_avg = p_avg
+            self.b_avg = b_avg
+            self.V_avg = [V_avg] + Vi[2:]
+            self.W_avg = [W_avg] + Wi[2:]
+            self.k_avg = [k_avg] + ki[2:]
+        else:
+            self.p_avg = p_avg.moveaxis(0, axis)
+            self.b_avg = b_avg.moveaxis(0, axis)
+            self.V_avg = Vi[:axis] + [V_avg] + Vi[axis+1:]
+            self.W_avg = Wi[:axis] + [W_avg] + Wi[axis+1:]
+            self.k_avg = ki[:axis] + [k_avg] + ki[axis+1:]
+
+    def fold_bandpowers(self):
+        """
+        Average negative and positive k modes for each
+        data dimension in self.p.
+
+        Notes
+        -----
+        self.p_avg : folded bandpowers
+        self.b_avg : folded bandpower biases
+        self.V_avg : folded bandpower covariances
+        self.W_avg : folded bandpower window functions
+        self.k_avg : folded bandpower k modes
+        """
+        assert hasattr(self, 'p'), "Must run self.compute_p()"
+        for i in range(self.Ndim):
+            self.average_bandpowers(axis=i)
+
+    def compute_MWVp(self, norm='I', rcond=1e-15, C_bias=None, C_errs=None, diag=True):
         """
         Shallow wrapper for compute_MW, p, V and spherical average
 
         Parameters
         ----------
         norm : see compute_MW()
-        C_data : see compute_V()
+        rcond : see compute_MW()
         C_bias : see compute_p()
-        sph_avg : If True, run self.spherical_average()
-        kp_sph : see spherical_average()
+        C_errs : see compute_V()
+        diag : see compute_V()
         """
-        self.compute_MW(norm=norm)
+        self.compute_MW(norm=norm, rcond=rcond)
         self.compute_p(C_bias=C_bias)
-        self.compute_V(C_data=C_data)
-        if sph_avg:
-            self.spherical_average(kp_sph=kp_sph)
+        self.compute_V(C=C_errs, diag=diag)
 
     def _compute_dsq(self, kp, p, b, V):
         kfac = kp[:, None]**3 / 2 / np.pi**2
@@ -405,7 +632,7 @@ class QE:
 
     def compute_dsq(self):
         """
-        Compute Delta-Square from self.kp_sph
+        Compute Delta-Square from self.k_avg and self.p_avg
 
         Result
         -----
@@ -413,6 +640,7 @@ class QE:
         self.dsq_b
         self.dsq_V
         """
-        assert hasattr(self, 'p_sph')
-        self.dsq, self.dsq_b, self.dsq_V = self._compute_dsq(self.kp_sph, self.p_sph, self.b_sph, self.V_sph)
-
+        assert hasattr(self, 'p_avg')
+        assert self.p_avg.ndim == 2, "Must average p down to 1D before computing dsq"
+        self.dsq, self.dsq_b, self.dsq_V = self._compute_dsq(self.k_avg[0], self.p_avg,
+                                                             self.b_avg, self.V_avg[0])
