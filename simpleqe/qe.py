@@ -119,8 +119,8 @@ class QE:
         self.k = [np.fft.fftshift(2*np.pi*np.fft.fftfreq(n[0], dx)) for n, dx in zip(shape, self.dx)]
 
         # compute qft for each data dimension
-        self.qft = [np.fft.fft(np.eye(n[0])) for n in shape]
-        self.qft_pad = [np.pad(q, (n[1]-n[0])//2) for q, n in zip(self.qft, shape)]
+        self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0])), axes=0) for n in shape]
+        self.qft_pad = [np.pad(q, (n[1]-n[0])//2) for q, n in zip(self.qft, shape)]        
 
     def _compute_qR(self, qft, R):
         """
@@ -213,7 +213,7 @@ class QE:
         """
         H = []
         for qr, qp in zip(qR, qft_pad):
-            H.append(0.5 * abs(np.einsum("am,bm->ab", qr, qp))**2)
+            H.append(0.5 * abs(qr @ qp.conj().T)**2)
 
         return H
 
@@ -232,7 +232,7 @@ class QE:
         -------
         self.H
         """
-        if not hasattr(self, 'qft_prime'):
+        if not hasattr(self, 'qft_pad'):
             raise ValueError("First run compute_qft()")
         if not hasattr(self, 'qR'):
             raise ValueError("First run compute_qR()")
@@ -353,24 +353,25 @@ class QE:
         b = np.zeros(self.x1.shape, dtype=float)
         if C is not None:
             for i, (c, m, qr) in enumerate(zip(C, M, qR)):
-                # decompose matrix c into A A^T
-                u, s, v = np.linalg.svd(c, hermitian=True)
-                keep = s > s.max() * rcond
-                A = u[:, keep] * np.diag(np.sqrt(s[keep]))
+                if c is not None:
+                    # decompose matrix c into A A^T
+                    u, s, v = np.linalg.svd(c, hermitian=True)
+                    keep = s > s.max() * rcond
+                    A = u[:, keep] * np.diag(np.sqrt(s[keep]))
 
-                # compute qr A
-                qrA = np.einsum("ij,jk->ik" qr, A)
+                    # compute qr A
+                    qrA = qr @ A
 
-                # take abs sum to get un-normalized bias
-                ub = 0.5 * (abs(qrA)**2).sum(-1)
+                    # take abs sum to get un-normalized bias
+                    ub = 0.5 * (abs(qrA)**2).sum(-1)
 
-                # normalize
-                nb = m @ ub
+                    # normalize
+                    nb = m @ ub
 
-                # sum bias terms
-                bshape = [1 for j in range(b.ndim)]
-                bshape[i] = -1
-                b += nb.reshape(bshape)
+                    # sum bias terms
+                    bshape = [1 for j in range(b.ndim)]
+                    bshape[i] = -1
+                    b += nb.reshape(bshape)
 
         return b
 
@@ -427,10 +428,13 @@ class QE:
         -------
         ndarray
         """
-        V = None
-        if C is not None:
-            V = []
-            for i, (c, m, qr) in enumerate(zip(C, M, qR)):
+        V = []
+        if C is None: C = [None for m in M]
+        for i, (c, m, qr) in enumerate(zip(C, M, qR)):
+            # default is identity
+            v = np.eye(len(qr))
+            # update if cov is provided
+            if c is not None:
                 # compute un-normalized E: qR outer product
                 ue = 0.5 * np.einsum("ij,ik->ijk", qR, qR.conj())
 
@@ -448,12 +452,11 @@ class QE:
                     # compute full covariance
                     v = np.einsum("ijk,ljk->il", ec, ec)
 
-
-                V.append(v)
+            V.append(v)
 
         return V
 
-    def compute_V(self, C=None, rcond=1e-15, diag=True):
+    def compute_V(self, C=None, diag=True):
         """
         Compute bandpower covariance.
         Must run compute_MW() first.
@@ -463,9 +466,6 @@ class QE:
         C : list of ndarray
             List holding a 2D covariance matrix of shape
             (Npix, Npix) for each data dimension in x1.
-        rcond : float
-            Relative condition when decomposing C
-            via svd.
         diag : bool, optional
             If True, only compute diagonal of
             bandpower covariance. Otherwise compute
@@ -476,27 +476,24 @@ class QE:
         self.V
         """
         # compute bandpower covariance
-        self.V = self._compute_V(C, self.M, self.qR,
-                                 rcond=rcond, diag=diag)
+        self.V = self._compute_V(C, self.M, self.qR, diag=diag)
+        self.Vdiag = diag
 
-    def average_bandpowers(self, k_avg=None, axis=None):
+    def average_bandpowers(self, k_avg=None, two_dim=True, axis=None):
         """
         Average the computed normalized bandpowers
         and their associated metadata (e.g. covariances
         and window functions).
 
-        Note that a single call to this function averages
-        the first two data dimensions in self.p
-        (or self.p_avg if it exists). To get successive averages,
-        (e.g. 3D->1D average) make successive calls to this function.
-
         Parameters
         ----------
         k_avg : ndarray
             mag(k) to average onto.
+        two_dim : bool, optional
+            If True, average first two dimensions of self.p,
+            otherwise average first three dimensions of self.p.
         axis : int, optional
-            If None, perform average of first two dimensions
-            of self.p (self.p_avg).
+            If None, perform average of first N dimensions.
             If provided, only average this axis onto k_avg
             (e.g. this is used for folding the power spectra).
 
@@ -517,29 +514,50 @@ class QE:
         Wi = self.W if not hasattr(self, 'p_avg') else self.W_avg
         ki = self.k if not hasattr(self, 'p_avg') else self.k_avg
         s = pi.shape
-        assert pi.ndim > 2, "Cannot average p further"
+        if two_dim:
+            assert pi.ndim > 2, "Cannot 2D average p further"
+        else:
+            assert pi.ndim > 3, "Cannot 3D average p further"
 
-        # 
         if axis is None:
             # averaging first two dimensions: unravel first two dimensions
-            p = pi.reshape(s[0]*s[1], *s[2:])
-            b = bi.reshape(s[0]*s[1], *s[2:])
+            if two_dim:
+                p = pi.reshape(s[0]*s[1], *s[2:])
+                b = bi.reshape(s[0]*s[1], *s[2:])
+            else:
+                p = pi.reshape(s[0]*s[1]*s[2], *s[3:])
+                b = bi.reshape(s[0]*s[1]*s[2], *s[3:])
 
             # stack matrices to match unraveled dimensions
-            V = np.kron(Vi[0], Vi[1])  # TODO: this is not correct, V should preserve units of p^2
-            W = np.kron(Wi[0], Wi[1])
-            K = np.meshgrid(ki[0], ki[1])
-            k = np.sqrt(K[0].ravel()**2 + K[1].ravel()**2)
+            if two_dim:
+                if self.Vdiag:
+                    V = np.diag(np.kron(Vi[0].diagonal(), Vi[1].diagonal()))
+                else:
+                    V = np.kron(Vi[0], Vi[1])
+                W = np.kron(Wi[0], Wi[1])
+                K = np.meshgrid(ki[0], ki[1])
+                k = np.sqrt(K[0].ravel()**2 + K[1].ravel()**2)
+            else:
+                if self.Vdiag:
+                    V = np.diag(np.kron(np.kron(Vi[0].diagonal(), Vi[1].diagonal()), Vi[2].diagonal()))
+                else:
+                    V = np.kron(np.kron(Vi[0], Vi[1]), Vi[2])
+                W = np.kron(Wi[0], np.kron(Wi[1], Wi[2]))
+                K = np.meshgrid(ki[0], ki[1], ki[2])
+                k = np.sqrt(K[0].ravel()**2 + K[1].ravel()**2 + K[2].ravel()**2)
+
+            # TODO: V = kron(V1, V2) is not correct, V should preserve units of p^2
+            # maybe its a geometric mean?
 
             # get k_avg points
             if k_avg is None:
-                k_avg = np.linspace(k.min(), k.max(), max(K.shape)//2)
+                k_avg = np.linspace(k.min(), k.max(), max(len(ki[0]), len(ki[1]))//2)
 
         else:
             # otherwise, we are folding this axis
             assert axis < pi.ndim
-            p = pi.moveaxis(axis, 0)
-            b = bi.moveaxis(axis, 0)
+            p = np.moveaxis(pi, axis, 0)
+            b = np.moveaxis(bi, axis, 0)
             V = Vi[axis]
             W = Wi[axis]
             k = abs(ki[axis])
@@ -548,40 +566,47 @@ class QE:
                 k_avg = np.unique(k)
 
         # construct A matrix: p_xyz = A @ p_avg
-        # note: we use 1D linear interpolation between two nearest k_avg modes
-        # to map p_avg -> p_xyz
-        # linear interpolation between (x0, y0) & (x1, y1) at xp is:
-        # yp = y0 * (x1-xp) / (x1-x0) + y1 * (xp - x0) / (x1-x0)
         A = np.zeros((len(k), len(k_avg)), dtype=float)
         for i, _k in enumerate(k):
-            # for each raveled k, get two nearest k_avg modes
-            nn = sort(np.argsort(np.abs(k_avg - _k))[:2])
+            # nearest neighbor interpolation
+            nn = np.argmin(np.abs(k_avg - abs(_k)))
+            A[i, nn] = 1.0
 
-            # get linear interpolation weights
-            denom = (k_avg[nn[1]] - k_avg[nn[0]])
-            A[i, nn[0]] = (k_avg[nn[1]] - _k) / denom
-            A[i, nn[1]] = (k_avg[nn[0]] - _k) / denom
+            # linear interpolation: not as stable
+            #nn = np.sort(np.argsort(np.abs(k_avg - _k))[:2])
+            #A[i, nn[0]] = (k_avg[nn[1]] - _k) / (k_avg[nn[1]] - k_avg[nn[0]])
+            #A[i, nn[1]] = (_k - k_avg[nn[0]]) / (k_avg[nn[1]] - k_avg[nn[0]])
 
         # compute inverse matrices
-        Vinv = np.linalg.pinv(V)
+        if self.Vdiag:
+            Vinv = np.diag(1/V.diagonal().clip(1e-30))
+        else:
+            Vinv = np.linalg.pinv(V)
         AtVinv = A.T @ Vinv
         AtVinvAinv = np.linalg.pinv(AtVinv @ A)
+        D = AtVinvAinv @ AtVinv
 
         # get averaged quantities
-        p_avg = AtVinvAinv @ AtVinv @ p
-        b_avg = AtVinvAinv @ AtVinv @ b
+        p_avg = np.einsum("ij,j...->i...", D, p)
+        b_avg = np.einsum("ij,j...->i...", D, b)
         V_avg = AtVinvAinv
-        W_avg = AtVinvAinv @ AtVinv @ W @ A
+        W_avg = D @ W @ A
 
         if axis is None:
             self.p_avg = p_avg
             self.b_avg = b_avg
-            self.V_avg = [V_avg] + Vi[2:]
-            self.W_avg = [W_avg] + Wi[2:]
-            self.k_avg = [k_avg] + ki[2:]
+            if two_dim:
+                self.V_avg = [V_avg] + Vi[2:]
+                self.W_avg = [W_avg] + Wi[2:]
+                self.k_avg = [k_avg] + ki[2:]
+            else:
+                self.V_avg = [V_avg] + Vi[3:]
+                self.W_avg = [W_avg] + Wi[3:]
+                self.k_avg = [k_avg] + ki[3:]
+
         else:
-            self.p_avg = p_avg.moveaxis(0, axis)
-            self.b_avg = b_avg.moveaxis(0, axis)
+            self.p_avg = np.moveaxis(p_avg, 0, axis)
+            self.b_avg = np.moveaxis(b_avg, 0, axis)
             self.V_avg = Vi[:axis] + [V_avg] + Vi[axis+1:]
             self.W_avg = Wi[:axis] + [W_avg] + Wi[axis+1:]
             self.k_avg = ki[:axis] + [k_avg] + ki[axis+1:]
@@ -644,3 +669,86 @@ class QE:
         assert self.p_avg.ndim == 2, "Must average p down to 1D before computing dsq"
         self.dsq, self.dsq_b, self.dsq_V = self._compute_dsq(self.k_avg[0], self.p_avg,
                                                              self.b_avg, self.V_avg[0])
+
+
+class DelayQE(QE):
+    """
+    Delay Spectrum QE
+    """
+    def __init__(self, x1, dx, kperp, x2=None, idx=None, scalar=None):
+        """        
+        Parameters
+        ----------
+        x1 : ndarray (Nbls, Nfreqs, ..., Nother)
+            Data vector for LHS of QE, with Ndim data dimensions (Nbls, Nfreqs, ...)
+            and 1 final dimension to broadcast over (Nother,)
+        dx : float
+            Delta-x frequency units [Hz]
+        kperp : ndarray
+            k_perp values of shape (Nbls,) corresponding to each baseline
+        x2 : ndarray (Nbls, Nfreqs, ..., Nother)
+            Data vector for RHS of QE, with same convention as x1. Default is
+            to use x1.
+        idx : tuple or slice object, optional
+            Indexing for frequency axis.
+            A wider bandwidth can be useful for specialized data weighting
+            (e.g. inverse covariance), while still estimating the pspec
+            over a narrower bandwidth.
+        scalar : float, optional
+            Overall normalization for power spectra.
+            E.g. for delay spectrum see HERA Memo #27.
+            Default is 1.
+        Notes
+        -----
+        The code adopts the following defintions
+
+        qft_a = e^{-2pi i a n / N}
+        qR_a = qft_a R
+        H_ab = 1/2 tr[qR_a^T qR_b]
+        q_a = 1/2 x1^T qR_a^T qR_a x2
+        M = H^-1 or H^-1/2 or propto I
+        p_a = M_ab q_b
+        W = M H
+        E_a = 1/2 M_ab (qR_b^T qR_b)
+        V_ab = 2 tr(C E_a C E_b)
+        b_a = tr(C E_a)
+        """
+        super().__init__(x1, [1, dx], x2=x2, idx=[slice(None), idx], scalar=scalar)
+        self.kperp = kperp
+
+    def set_R(self, R=None):
+        """
+        Set frequency weighting matrix
+
+        Parameters
+        ----------
+        R : ndarray
+            (Nspw_freqs, Nfreqs) weighting matrix
+        """
+        super().set_R([np.eye(self.x1.shape[0]), R])
+
+    def compute_qft(self):
+        """
+        Compute the column vector qft, which goes into
+        the outer product Q_a = qft_a qft_a^T for each
+        data dimension in self.x1
+
+        Note that we compute qft of shape (Nbp, Npix)
+        and we also compute a qft_pad of shape (Nbp, Npix+Npad)
+        where Npix is set by self.idx (i.e. indices over which
+        we estimate the power spectrum) and Npix+Npad are additional
+        (optional) pixels used in the R weighting step. qft_pad
+        is only needed if self.idx is used to select a subset
+        of pixels.
+        """
+        assert hasattr(self, 'R'), "Must first run set_R()"
+        # compute k-modes for each data dimension
+        shape = [R.shape for R in self.R]
+        self.k = [kperp, np.fft.fftshift(2*np.pi*np.fft.fftfreq(self.x1.shape[1], self.dx[1]))]
+
+        # compute qft for each data dimension
+        self.qft = [np.eye(self.x1.shape[0]),
+                    np.fft.fftshift(np.fft.ifft(np.eye(self.x1.shape[1])), axes=0)]
+        self.qft_pad = [np.eye(self.x1.shape[0]),
+                        np.pad(self.qft[1], abs(np.diff(self.R[1].shape)))]
+
