@@ -239,7 +239,7 @@ class QE:
 
         self.H = self._compute_H(self.qR, self.qft_pad)
 
-    def _compute_M(self, norm, H, rcond=1e-15, Wnorm=True):
+    def _compute_M(self, norm, H, rcond=1e-15, Wnorm=False):
         if norm == 'I':
             M = np.zeros(H.shape)
             M[range(len(H)), np.argmax(H, axis=1)] = 1 / H.sum(axis=1)
@@ -256,7 +256,7 @@ class QE:
             if norm == 'H^-1':
                 M = u @ np.diag(1/s) @ u.T.conj()
             elif norm == 'H^-1/2':
-                M = u @ np.diag(1/np.sqrt(s)) @ u.T.conj()
+                M = u @ np.diag(1/np.sqrt(s)) @ u.T.conj() * np.sqrt(s).sum() / s.sum()
         else:
             raise ValueError("{} not recognized".format(norm))
 
@@ -264,15 +264,15 @@ class QE:
             # get window functions
             W = M @ H
 
-            # ensure they are normalied
-            M /= abs(W.sum(axis=1, keepdims=True)).clip(1e-20)
+            # ensure they are normalized
+            M /= W.sum(axis=1, keepdims=True).clip(1e-3)
 
         return M * self.scalar
 
     def _compute_W(self, M, H):
         return M @ H
 
-    def compute_MW(self, norm='I', rcond=1e-15, Wnorm=True):
+    def compute_MW(self, norm='I', rcond=1e-15, Wnorm=False):
         """
         Compute normalization and window functions.
         For H^-1 and H^-1/2, uses SVD pseudoinverse.
@@ -285,7 +285,10 @@ class QE:
             Relative condition for truncation
             of svd for norm='H^-1' or norm='H^-1/2'
         Wnorm : bool, optional
-            If True, normalize W such that rows sum to unity
+            If True, explicitely normalize W such that
+            rows sum to unity. This is generally done
+            implicitly in each case, but can be slightly
+            off depending on choice of norm.
 
         Results
         -------
