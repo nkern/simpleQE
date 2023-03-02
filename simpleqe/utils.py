@@ -16,7 +16,6 @@ class Cosmology(FlatLambdaCDM):
     """
     Subclass of astropy.FlatLambdaCDM, with additional methods for 21cm intensity mapping.
     """
-
     def __init__(self, H0=67.7, Om0=0.3075, Ob0=0.0486):
         """
         Subclass of astropy.FlatLambdaCDM, with additional methods for 21cm intensity mapping.
@@ -221,7 +220,7 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
     QE object
         Noise dataset
     """
-    from simpleqe import QE
+    from simpleqe.qe import DelayQE
     if data_spw is None:
         data_spw = slice(None)
     Kf = Kfg(freqs[:, None]) * fg_mult
@@ -230,25 +229,29 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
 
     np.random.seed(seed)
     mean = np.zeros_like(freqs)
-    f = np.atleast_2d(mn.rvs(mean, Kf/2, Ntimes) + 1j * mn.rvs(mean, Kf/2, Ntimes))[:, data_spw]
-    e = np.atleast_2d(mn.rvs(mean, Ke/2, Ntimes) + 1j * mn.rvs(mean, Ke/2, Ntimes))[:, data_spw]
-    n1 = np.atleast_2d(mn.rvs(mean, Kn/2, Ntimes) + 1j * mn.rvs(mean, Kn/2, Ntimes))[:, data_spw]
+    f = np.atleast_2d(mn.rvs(mean, Kf/2, Ntimes) + 1j * mn.rvs(mean, Kf/2, Ntimes)).T[None, data_spw]
+    e = np.atleast_2d(mn.rvs(mean, Ke/2, Ntimes) + 1j * mn.rvs(mean, Ke/2, Ntimes)).T[None, data_spw]
+    n1 = np.atleast_2d(mn.rvs(mean, Kn/2, Ntimes) + 1j * mn.rvs(mean, Kn/2, Ntimes)).T[None, data_spw]
     x1 = f + e + n1
     if ind_noise:
-        n2 = np.atleast_2d(mn.rvs(mean, Kn/2, Ntimes) + 1j * mn.rvs(mean, Kn/2, Ntimes))[:, data_spw]
+        n2 = np.atleast_2d(mn.rvs(mean, Kn/2, Ntimes) + 1j * mn.rvs(mean, Kn/2, Ntimes)).T[None, data_spw]
         x2 = f + e + n2
     else:
         x2 = x1.copy()
     
-    D = QE(freqs[data_spw], x1, x2=x2, C=(Kf + Ke + Kn)[data_spw, data_spw], spw=pspec_spw,
-           cosmo=cosmo, Omega_Eff=Omega_Eff)
-    F = QE(freqs[data_spw], f, C=Kf[data_spw, data_spw], spw=pspec_spw,
-           cosmo=cosmo, Omega_Eff=Omega_Eff)
-    E = QE(freqs[data_spw], e, C=Ke[data_spw, data_spw], spw=pspec_spw,
-           cosmo=cosmo, Omega_Eff=Omega_Eff)
-    N = QE(freqs[data_spw], n1, x2=n2, C=Kn[data_spw, data_spw], spw=pspec_spw,
-           cosmo=cosmo, Omega_Eff=Omega_Eff)
-    
+    # metadata
+    df = freqs[1] - freqs[0]
+    dx = df * cosmo.dRpara_df(cosmo.f2z(freqs.mean()))
+    kperp = [0.0]  # assume this is kperp of 0 even though this isn't the auto-correlation
+
+    # compute cosmological scalar
+    scalar = cosmo.X2Y(cosmo.f2z(freqs.mean())) * Omega_Eff * (len(freqs[pspec_spw]) * df)
+
+    D = DelayQE(x1, dx, kperp, x2=x2, C=(Kf + Ke + Kn)[data_spw, data_spw], idx=pspec_spw, scalar=scalar)
+    F = DelayQE(f,  dx, kperp, C=(Kf)[data_spw, data_spw], idx=pspec_spw, scalar=scalar)
+    E = DelayQE(e,  dx, kperp, C=(Ke)[data_spw, data_spw], idx=pspec_spw, scalar=scalar)
+    N = DelayQE(n1, dx, kperp, x2=n2, C=(Kn)[data_spw, data_spw], idx=pspec_spw, scalar=scalar)
+
     return D, F, E, N
 
 
