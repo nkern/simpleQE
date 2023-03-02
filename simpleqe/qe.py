@@ -120,7 +120,10 @@ class QE:
 
         # compute qft for each data dimension
         self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0])), axes=0) for n in shape]
-        self.qft_pad = [np.pad(q, (n[1]-n[0])//2) for q, n in zip(self.qft, shape)]        
+        self.qft_pad = []
+        for q, n in zip(self.qft, shape):
+            p = np.zeros((n[0], (n[1]-n[0])//2), dtype=float)
+            self.qft_pad.append(np.hstack([p, np.hstack([q, p])]))
 
     def _compute_qR(self, qft, R):
         """
@@ -241,9 +244,7 @@ class QE:
 
     def _compute_M(self, norm, H, rcond=1e-15, Wnorm=False):
         if norm == 'I':
-            M = np.zeros(H.shape)
-            M[range(len(H)), np.argmax(H, axis=1)] = 1 / H.sum(axis=1)
-            M = M.T
+            M = np.eye(len(H)) / H.sum(axis=1)
         elif norm in ['H^-1', 'H^-1/2']:
             u,s,v = np.linalg.svd(H)
             truncate = np.where(s > (s.max() * rcond))[0]
