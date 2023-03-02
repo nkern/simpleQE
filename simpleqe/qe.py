@@ -17,7 +17,7 @@ class QE:
     and assuming each data dimension is separable (i.e. on a uniform,
     rectangular grid).
     """
-    def __init__(self, x1, dx, x2=None, idx=None, scalar=None):
+    def __init__(self, x1, dx, x2=None, idx=None, scalar=None, C=None):
         """        
         Parameters
         ----------
@@ -42,6 +42,10 @@ class QE:
             Overall normalization for power spectra.
             E.g. for delay spectrum see HERA Memo #27.
             Default is 1.
+        C : list, optional
+            List of covariance matrices for each
+            data dimension in x1. Only for metadata purposes.
+
         Notes
         -----
         The code adopts the following defintions
@@ -75,6 +79,7 @@ class QE:
         self.dx = dx
         self.idx = idx
         self.scalar = scalar if scalar is not None else 1
+        self.C = C
 
     def set_R(self, R=None):
         """
