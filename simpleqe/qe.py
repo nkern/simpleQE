@@ -100,7 +100,7 @@ class QE:
         if R is None:
             R = [np.eye(self.x1.shape[i]) for i in range(self.Ndim)]
         if self.idx is not None:
-            R = [r[idx] for r, idx in zip(R, self.idx)]
+            R = [r[idx] if idx is not None else r for r, idx in zip(R, self.idx)]
 
         self.R = R
 
@@ -271,9 +271,9 @@ class QE:
             W = M @ H
 
             # ensure they are normalized
-            M /= W.sum(axis=1, keepdims=True).clip(1e-3)
+            M /= W.sum(axis=1, keepdims=True).clip(1e-10)
 
-        return M * self.scalar
+        return M
 
     def _compute_W(self, M, H):
         return M @ H
@@ -333,7 +333,7 @@ class QE:
             str_out = es_str.replace(es_str[i], 'i')
             p = np.einsum("ij,{}...->{}...".format(str_in, str_out), m, p)
 
-        return p
+        return p * self.scalar
 
     def _compute_b(self, C, M, qR, rcond=1e-15):
         """
@@ -366,7 +366,7 @@ class QE:
                     # decompose matrix c into A A^T
                     u, s, v = np.linalg.svd(c, hermitian=True)
                     keep = s > s.max() * rcond
-                    A = u[:, keep] * np.diag(np.sqrt(s[keep]))
+                    A = u[:, keep] @ np.diag(np.sqrt(s[keep]))
 
                     # compute qr A
                     qrA = qr @ A
@@ -382,7 +382,7 @@ class QE:
                     bshape[i] = -1
                     b += nb.reshape(bshape)
 
-        return b
+        return b * self.scalar
 
     def compute_p(self, C_bias=None, rcond=1e-15):
         """
@@ -409,6 +409,12 @@ class QE:
 
         # compute bias term
         self.b = self._compute_b(C_bias, self.M, self.qR, rcond=rcond)
+
+        if hasattr(self, 'p_avg'):
+            delattr(self, 'p_avg')
+            delattr(self, 'b_avg')
+            delattr(self, 'V_avg')
+            delattr(self, 'W_avg')
 
     def _compute_V(self, C, M, qR, diag=True):
         """
@@ -445,7 +451,7 @@ class QE:
             # update if cov is provided
             if c is not None:
                 # compute un-normalized E: qR outer product
-                ue = 0.5 * np.einsum("ij,ik->ijk", qR, qR.conj())
+                ue = 0.5 * np.einsum("ij,ik->ijk", qr, qr.conj())
 
                 # compute normalized E
                 e = np.einsum("ij,jkl->ikl", m, ue)
@@ -455,13 +461,13 @@ class QE:
 
                 if diag:
                     # compute just variance
-                    v = np.diag(np.einsum("ijk,ijk->i", ec, ec))
+                    v = np.diag(np.einsum("ijk,ijk->i", ec, ec.conj()))
 
                 else:
                     # compute full covariance
-                    v = np.einsum("ijk,ljk->il", ec, ec)
+                    v = np.einsum("ijk,ljk->il", ec, ec.conj())
 
-            V.append(v)
+            V.append(v * self.scalar**2)
 
         return V
 
@@ -569,7 +575,7 @@ class QE:
             b = np.moveaxis(bi, axis, 0)
             V = Vi[axis]
             W = Wi[axis]
-            k = abs(ki[axis])
+            k = np.abs(ki[axis])
 
             if k_avg is None:
                 k_avg = np.unique(k)
@@ -684,7 +690,7 @@ class DelayQE(QE):
     """
     Delay Spectrum QE
     """
-    def __init__(self, x1, dx, kperp, x2=None, idx=None, scalar=None):
+    def __init__(self, x1, dx, kperp, x2=None, idx=None, scalar=None, C=None):
         """        
         Parameters
         ----------
@@ -695,6 +701,7 @@ class DelayQE(QE):
             Delta-x frequency units [Hz]
         kperp : ndarray
             k_perp values of shape (Nbls,) corresponding to each baseline
+            in x1
         x2 : ndarray (Nbls, Nfreqs, ..., Nother)
             Data vector for RHS of QE, with same convention as x1. Default is
             to use x1.
@@ -722,7 +729,7 @@ class DelayQE(QE):
         V_ab = 2 tr(C E_a C E_b)
         b_a = tr(C E_a)
         """
-        super().__init__(x1, [1, dx], x2=x2, idx=[slice(None), idx], scalar=scalar)
+        super().__init__(x1, [1, dx], x2=x2, idx=[slice(None), idx], scalar=scalar, C=C)
         self.kperp = kperp
 
     def set_R(self, R=None):
@@ -753,11 +760,67 @@ class DelayQE(QE):
         assert hasattr(self, 'R'), "Must first run set_R()"
         # compute k-modes for each data dimension
         shape = [R.shape for R in self.R]
-        self.k = [kperp, np.fft.fftshift(2*np.pi*np.fft.fftfreq(self.x1.shape[1], self.dx[1]))]
+        self.k = [self.kperp, np.fft.fftshift(2*np.pi*np.fft.fftfreq(self.x1.shape[1], self.dx[1]))]
 
-        # compute qft for each data dimension
+        # compute qft for frequency dimension
         self.qft = [np.eye(self.x1.shape[0]),
                     np.fft.fftshift(np.fft.ifft(np.eye(self.x1.shape[1])), axes=0)]
+        n = self.R[1].shape
+        p = np.zeros((n[0], (n[1]-n[0])//2), dtype=float)
         self.qft_pad = [np.eye(self.x1.shape[0]),
-                        np.pad(self.qft[1], abs(np.diff(self.R[1].shape)))]
+                        np.hstack([p, np.hstack([self.qft[1], p])])]
 
+    def compute_p(self, C_bias=None, rcond=1e-15):
+        """
+        Compute normalized bandpowers and bias term.
+        Must first compute_q(), and compute_MW()
+
+        Parameters
+        ----------
+        C_bias : ndarray, optional
+            Bias covariance for frequency dimension
+            in x1. Default is zero bias.
+        rcond : float
+            Relative condition when decomposing C
+            via svd
+
+        Results
+        -------
+        self.p, self.b
+        """
+        # compute normalized bandpowers
+        assert hasattr(self, 'q'), "Must first run compute_q()"
+        assert hasattr(self, "M"), "Must first run compute_MW()"
+        self.p = self._compute_p(self.M, self.q)
+
+        # compute bias term
+        self.b = self._compute_b([None, C_bias], self.M, self.qR, rcond=rcond)
+
+        if hasattr(self, 'p_avg'):
+            delattr(self, 'p_avg')
+            delattr(self, 'b_avg')
+            delattr(self, 'V_avg')
+            delattr(self, 'W_avg')
+
+    def compute_V(self, C=None, diag=True):
+        """
+        Compute bandpower covariance.
+        Must run compute_MW() first.
+
+        Parameters
+        ----------
+        C : ndarray
+            2D covariance matrix of shape
+            (Nfreqs, Nfreqs) for freq dimension in x1.
+        diag : bool, optional
+            If True, only compute diagonal of
+            bandpower covariance. Otherwise compute
+            off-diagonal as well.
+
+        Results
+        -------
+        self.V
+        """
+        # compute bandpower covariance
+        self.V = self._compute_V([None, C], self.M, self.qR, diag=diag)
+        self.Vdiag = diag
