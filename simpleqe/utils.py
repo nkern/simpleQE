@@ -245,7 +245,8 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
     kperp = [0.0]  # assume this is kperp of 0 even though this isn't the auto-correlation
 
     # compute cosmological scalar
-    scalar = cosmo.X2Y(cosmo.f2z(freqs.mean())) * Omega_Eff * (len(freqs[pspec_spw]) * df)
+    spw = pspec_spw if pspec_spw is not None else slice(None)
+    scalar = cosmo.X2Y(cosmo.f2z(freqs.mean())) * Omega_Eff * (len(freqs[spw]) * df)
 
     D = DelayQE(x1, dx, kperp, x2=x2, C=(Kf + Ke + Kn)[data_spw, data_spw], idx=pspec_spw, scalar=scalar)
     F = DelayQE(f,  dx, kperp, C=(Kf)[data_spw, data_spw], idx=pspec_spw, scalar=scalar)
