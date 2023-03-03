@@ -40,7 +40,10 @@ class QE:
             over a narrower bandwidth.
         scalar : float, optional
             Overall normalization for power spectra.
-            E.g. for delay spectrum see HERA Memo #27.
+            E.g. for delay spectrum (see HERA Memo #27)
+            this is X2Y * Omega_Eff * Nfreqs * dfreq
+            assuming unit-normalized qft matrices
+            (i.e. np.fft.fft convention).
             Default is 1.
         C : list, optional
             List of covariance matrices for each
@@ -123,8 +126,8 @@ class QE:
         shape = [R.shape for R in self.R]
         self.k = [np.fft.fftshift(2*np.pi*np.fft.fftfreq(n[0], dx)) for n, dx in zip(shape, self.dx)]
 
-        # compute qft for each data dimension
-        self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0])), axes=0) for n in shape]
+        # compute qft for each data dimension: this is inverse ft without 1 / N
+        self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0])*n[1]), axes=0) for n in shape]
         self.qft_pad = []
         for q, n in zip(self.qft, shape):
             p = np.zeros((n[0], (n[1]-n[0])//2), dtype=float)
@@ -220,8 +223,9 @@ class QE:
         shape BXM
         """
         H = []
+        prefac = 0.5 / self.Ndim  # 
         for qr, qp in zip(qR, qft_pad):
-            H.append(0.5 * abs(qr @ qp.conj().T)**2)
+            H.append(prefac * abs(qr @ qp.conj().T)**2)
 
         return H
 
@@ -260,9 +264,9 @@ class QE:
             # right space of H. This only makes a difference
             # if H is non-square.
             if norm == 'H^-1':
-                M = u @ np.diag(1/s) @ u.T.conj()
+                M = V.T.conj() @ np.diag(1/s) @ u.T.conj()
             elif norm == 'H^-1/2':
-                M = u @ np.diag(1/np.sqrt(s)) @ u.T.conj() * np.sqrt(s).sum() / s.sum()
+                M = v.T.conj() @ np.diag(1/np.sqrt(s)) @ u.T.conj() * np.sqrt(s).sum() / s.sum()
         else:
             raise ValueError("{} not recognized".format(norm))
 
@@ -685,7 +689,6 @@ class QE:
         self.dsq, self.dsq_b, self.dsq_V = self._compute_dsq(self.k_avg[0], self.p_avg,
                                                              self.b_avg, self.V_avg[0])
 
-
 class DelayQE(QE):
     """
     Delay Spectrum QE
@@ -762,9 +765,10 @@ class DelayQE(QE):
         shape = [R.shape for R in self.R]
         self.k = [self.kperp, np.fft.fftshift(2*np.pi*np.fft.fftfreq(self.x1.shape[1], self.dx[1]))]
 
-        # compute qft for frequency dimension
+        # compute qft for frequency dimension: this is ifft without 1 / N
+        n = self.x1.shape[1]
         self.qft = [np.eye(self.x1.shape[0]),
-                    np.fft.fftshift(np.fft.ifft(np.eye(self.x1.shape[1])), axes=0)]
+                    np.fft.fftshift(np.fft.ifft(np.eye(n)*n), axes=0)]
         n = self.R[1].shape
         p = np.zeros((n[0], (n[1]-n[0])//2), dtype=float)
         self.qft_pad = [np.eye(self.x1.shape[0]),
