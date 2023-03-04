@@ -278,7 +278,7 @@ def interp_Wcdf(W, k, lower_perc=0.16, upper_perc=0.84):
         dk of WF's 84th (default) percentile from median
     """
     # get cdf: take sum of only abs(W)
-    W = np.abs(W)
+    W = np.abs(W) / W.sum(axis=1, keepdims=True)
     Wcdf = np.array([np.sum(W[:, :i+1].real, axis=1) for i in range(W.shape[1]-1)]).T
     
     # get shifted k such that a symmetric window has 50th perc at max value
