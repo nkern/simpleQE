@@ -175,7 +175,7 @@ class Cosmology(FlatLambdaCDM):
 
 def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mult=1,
              ind_noise=True, data_spw=None, pspec_spw=None, seed=0, cosmo=None, Omega_Eff=None):
-    """Generate mock dataset and return QE objects
+    """Generate mock dataset and return DelayQE objects
 
     Parameters
     ----------
@@ -211,13 +211,13 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
 
     Returns
     -------
-    QE object
+    DelayQE object
         Full dataset
-    QE object
+    DelayQE object
         Foreground dataset
-    QE object
+    DelayQE object
         EoR dataset
-    QE object
+    DelayQE object
         Noise dataset
     """
     from simpleqe.qe import DelayQE
