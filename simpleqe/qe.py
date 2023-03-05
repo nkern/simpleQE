@@ -62,7 +62,8 @@ class QE:
         RQR_a = R^T Q_a R
         H_ab = 1/2 tr[qR_a^T qR_b] or
         H_ab = 1/2 tr[R^T Q_a R Q_b]
-        q_a = 1/2 x1^T qR_a^T qR_a x2
+        q_a = 1/2 x1^T qR_a^T qR_a x2 or
+        q_a = 1/2 x1^T R^T Q_a R x2
         M = H^-1 or H^-1/2 or propto I
         p_a = M_ab q_b
         W = M H
@@ -193,7 +194,7 @@ class QE:
             if x2 is None:
                 x2 = self.x1
             q = np.einsum('{}...,{}...->{}...'.format(in_str, x2_str, out_str), x1, x2)
-            
+
         # go the qR route: dot qR into x1 and x2, then multiply
         else:
             es_str = 'ijkl'[:self.Ndim]
@@ -728,6 +729,20 @@ class DelayQE(QE):
             self.Q_pad[0][:] = np.eye(self.x1.shape[0])
 
         self._compute_qR()
+
+    def compute_H(self):
+        """
+        Compute H_ab = 0.5 tr[R^T Q_a R Q_b]
+        For R = C^-1, H = F is the Fisher matrix.
+
+        Modifies the H[0] matrix based on delay spectrum.
+
+        Results
+        -------
+        self.H
+        """
+        super().compute_H()
+        self.H[0] /= len(self.H[0])
 
     def compute_p(self, C_bias=None, rcond=1e-15):
         """
