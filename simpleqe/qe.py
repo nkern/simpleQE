@@ -134,7 +134,7 @@ class QE:
         self.k = [np.fft.fftshift(2*np.pi*np.fft.fftfreq(n[0], dx)) for n, dx in zip(shape, self.dx)]
 
         # compute qft for each data dimension: this is inverse ft without 1 / N
-        self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0])*n[1]), axes=0) for n in shape]
+        self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0])*n[0]), axes=0) for n in shape]
         self._compute_qft_pad()
 
         # compute Q
@@ -339,7 +339,7 @@ class QE:
         self.p = p * self.scalar
 
         # compute bias term
-        b = np.zeros(self.x1.shape, dtype=float)
+        b = np.zeros(self.p.shape, dtype=float)
         QR = self.E if self.useQ else self.qR
         if C_bias is not None:
             for i, (c, m, qr) in enumerate(zip(C_bias, self.M, QR)):
@@ -651,7 +651,7 @@ class DelayQE(QE):
     """
     Delay Spectrum QE
     """
-    def __init__(self, x1, dx, kperp, x2=None, idx=None, scalar=None, C=None):
+    def __init__(self, x1, dx, kperp, x2=None, idx=None, scalar=None, C=None, useQ=False):
         """        
         Parameters
         ----------
@@ -677,6 +677,11 @@ class DelayQE(QE):
             Default is 1.
         C : ndarray, optional
             Freq-freq covariance of data. Only used as metadata.
+        useQ : bool, optional
+            If True, form outerproduct Q_a = qft_a qft_a^T
+            and compute downstream products as well,
+            otherwise use qft_a approximation instead (default).
+
         Notes
         -----
         The code adopts the following defintions
@@ -692,7 +697,7 @@ class DelayQE(QE):
         V_ab = tr(C E_a C E_b) (variance of p.real)
         b_a = tr(C E_a)
         """
-        super().__init__(x1, [1, dx], x2=x2, idx=[slice(None), idx], scalar=scalar, C=C)
+        super().__init__(x1, [1, dx], x2=x2, idx=[slice(None), idx], scalar=scalar, C=C, useQ=useQ)
         self.kperp = kperp
 
     def set_R(self, R=None):
