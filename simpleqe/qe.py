@@ -131,13 +131,12 @@ class QE:
         factor in front of the estimator.
         """
         assert hasattr(self, 'R'), "Must first run set_R()"
-        c = 0.5 ** (1/(2*self.Ndim))
         # compute k-modes for each data dimension
         shape = [R.shape for R in self.R]
         self.k = [np.fft.fftshift(2*np.pi*np.fft.fftfreq(n[0], dx)) for n, dx in zip(shape, self.dx)]
 
         # compute qft for each data dimension: this is inverse ft without 1 / N
-        self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0])*n[1]), axes=0) * c for n in shape]
+        self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0])*n[1]), axes=0) for n in shape]
         self.qft_pad = []
         for q, n in zip(self.qft, shape):
             p = np.zeros((n[0], (n[1]-n[0])//2), dtype=float)
@@ -191,6 +190,8 @@ class QE:
             # dot x2 into x1_Q
             x2_str = ''.join(bp[1] for bp in bp_strs)
             out_str = ''.join(bp[0] for bp in bp_strs)
+            if x2 is None:
+                x2 = self.x1
             q = np.einsum('{}...,{}...->{}...'.format(in_str, x2_str, out_str), x1, x2)
             
         # go the qR route: dot qR into x1 and x2, then multiply
@@ -208,7 +209,7 @@ class QE:
 
             q = x1.conj() * x2
 
-        self.q = q
+        self.q = 0.5 * q
 
     def compute_H(self):
         """
@@ -225,12 +226,12 @@ class QE:
         # Q route
         if self.useQ:
             for rqr, qp in zip(self.RQR, self.Q_pad):
-                H.append(np.einsum('aij,bji->ab', rqr, qp).real)
+                H.append(np.einsum('aij,bji->ab', rqr, qp).real * 0.5**(1./self.Ndim))
 
         # qft route
         else:
             for qr, qp in zip(self.qR, self.qft_pad):
-                H.append(abs(qr @ qp.conj().T)**2)
+                H.append(abs(qr @ qp.conj().T)**2 * 0.5**(1./self.Ndim))
 
         self.H = H
 
@@ -292,7 +293,7 @@ class QE:
         assert hasattr(self, 'H'), "Must first run compute_H"
         self.M = [self._compute_M(norm, H, rcond=rcond, Wnorm=Wnorm) for H in self.H]
         if self.useQ:
-            self.E = [m @ rqr for m, rqr in zip(self.M, self.RQR)]
+            self.E = [0.5 * m @ rqr for m, rqr in zip(self.M, self.RQR)]
 
         # compute window functions
         self.W = [self._compute_W(M, H) for M, H in zip(self.M, self.H)]
@@ -350,7 +351,7 @@ class QE:
                         qrA = qr @ A
 
                         # take abs sum to get un-normalized bias
-                        ub = (abs(qrA)**2).sum(-1)
+                        ub = 0.5 * (abs(qrA)**2).sum(-1)
 
                         # normalize
                         nb = m @ ub
@@ -715,17 +716,16 @@ class DelayQE(QE):
         factor in front of the estimator.
         """
         super().compute_qft()
-        c = 0.5 ** (1/(2*self.Ndim))
 
-        # update objects
+        # update objects for delay spectrum estimator
         shape = [R.shape for R in self.R]
         self.k[0] = self.kperp
-        self.qft[0] = np.eye(self.x1.shape[0]) * c
-        self.qft_pad[0] = np.eye(self.x1.shape[0]) * c
+        self.qft[0] = np.eye(self.x1.shape[0])
+        self.qft_pad[0] = np.eye(self.x1.shape[0])
 
         if self.useQ:
-            self.Q[0][:] = np.eye(self.x1.shape[0]) * c**2
-            self.Q_pad[0][:] = np.eye(self.x1.shape[0]) * c**2
+            self.Q[0][:] = np.eye(self.x1.shape[0])
+            self.Q_pad[0][:] = np.eye(self.x1.shape[0])
 
         self._compute_qR()
 
