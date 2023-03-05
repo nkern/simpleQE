@@ -60,16 +60,16 @@ class QE:
         Q_a = qft_a qft_a^T
         qR_a = qft_a R
         RQR_a = R^T Q_a R
-        H_ab = 1/2 tr[qR_a^T qR_b] or
-        H_ab = 1/2 tr[R^T Q_a R Q_b]
-        q_a = 1/2 x1^T qR_a^T qR_a x2 or
-        q_a = 1/2 x1^T R^T Q_a R x2
+        H_ab = tr[qR_a^T qR_b] or
+        H_ab = tr[R^T Q_a R Q_b]
+        q_a = x1^T qR_a^T qR_a x2 or
+        q_a = x1^T R^T Q_a R x2
         M = H^-1 or H^-1/2 or propto I
         p_a = M_ab q_b
         W = M H
-        E_a = 1/2 M_ab (qR_b^T qR_b) or
-        E_a = 1/2 M_ab R^T Q_b R
-        V_ab = 2 tr(C E_a C E_b)
+        E_a = M_ab (qR_b^T qR_b) or
+        E_a = M_ab R^T Q_b R
+        V_ab = tr(C E_a C E_b) (variance of p.real)
         b_a = tr(C E_a)
         """
         # assign data
@@ -127,9 +127,6 @@ class QE:
         (optional) pixels used in the R weighting step. qft_pad
         is only needed if self.idx is used to select a subset
         of pixels.
-
-        Note that this Q = qft qft^T also holds the 1/2
-        factor in front of the estimator.
         """
         assert hasattr(self, 'R'), "Must first run set_R()"
         # compute k-modes for each data dimension
@@ -138,19 +135,29 @@ class QE:
 
         # compute qft for each data dimension: this is inverse ft without 1 / N
         self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0])*n[1]), axes=0) for n in shape]
+        self._compute_qft_pad()
+
+        # compute Q
+        if self.useQ:
+            self._compute_Q()
+
+        # compute qft dotted into R
+        self._compute_qR()
+
+    def _compute_qft_pad(self):
+        assert hasattr(self, 'R'), "Must first run set_R()"
         self.qft_pad = []
+        shape = [R.shape for R in self.R]
         for q, n in zip(self.qft, shape):
             p = np.zeros((n[0], (n[1]-n[0])//2), dtype=float)
             self.qft_pad.append(np.hstack([p, np.hstack([q, p])]))
 
-        if self.useQ:
-            # compute outer products
-            self.Q = [np.einsum('ai,aj->aij', qft.conj(), qft) for qft in self.qft]
-            self.Q_pad = [np.einsum('ai,aj->aij', qft.conj(), qft) for qft in self.qft_pad]
-            ## TODO: apply bandpower sinc matrix correction
-            ## TODO: expose bandpower prior
-
-        self._compute_qR()
+    def _compute_Q(self):
+        # compute outer products
+        self.Q = [np.einsum('ai,aj->aij', qft.conj(), qft) for qft in self.qft]
+        self.Q_pad = [np.einsum('ai,aj->aij', qft.conj(), qft) for qft in self.qft_pad]
+        ## TODO: apply bandpower sinc matrix correction
+        ## TODO: expose bandpower prior
 
     def _compute_qR(self):
         """
@@ -210,11 +217,11 @@ class QE:
 
             q = x1.conj() * x2
 
-        self.q = 0.5 * q
+        self.q = q
 
     def compute_H(self):
         """
-        Compute H_ab = 0.5 tr[R^T Q_a R Q_b]
+        Compute H_ab = tr[R^T Q_a R Q_b]
         For R = C^-1, H = F is the Fisher matrix
 
         Results
@@ -227,12 +234,12 @@ class QE:
         # Q route
         if self.useQ:
             for rqr, qp in zip(self.RQR, self.Q_pad):
-                H.append(np.einsum('aij,bji->ab', rqr, qp).real * 0.5**(1./self.Ndim))
+                H.append(np.einsum('aij,bji->ab', rqr, qp).real)
 
         # qft route
         else:
             for qr, qp in zip(self.qR, self.qft_pad):
-                H.append(abs(qr @ qp.conj().T)**2 * 0.5**(1./self.Ndim))
+                H.append(abs(qr @ qp.conj().T)**2)
 
         self.H = H
 
@@ -294,7 +301,7 @@ class QE:
         assert hasattr(self, 'H'), "Must first run compute_H"
         self.M = [self._compute_M(norm, H, rcond=rcond, Wnorm=Wnorm) for H in self.H]
         if self.useQ:
-            self.E = [0.5 * m @ rqr for m, rqr in zip(self.M, self.RQR)]
+            self.E = [np.einsum("ab,bij->aij", m, rqr) for m, rqr in zip(self.M, self.RQR)]
 
         # compute window functions
         self.W = [self._compute_W(M, H) for M, H in zip(self.M, self.H)]
@@ -339,7 +346,7 @@ class QE:
                 if c is not None:
                     # compute normalized bias: tr[E @ C]
                     if self.useQ:
-                        nb = np.einsum('aij,ij->a', qr, c)
+                        nb = np.einsum('aij,ji->a', qr, c)
 
                     # compute un-normalized bias, then normalize
                     else:
@@ -352,7 +359,7 @@ class QE:
                         qrA = qr @ A
 
                         # take abs sum to get un-normalized bias
-                        ub = 0.5 * (abs(qrA)**2).sum(-1)
+                        ub = (abs(qrA)**2).sum(-1)
 
                         # normalize
                         nb = m @ ub
@@ -610,7 +617,7 @@ class QE:
         Wnorm : see compute_MW()
         """
         self.compute_MW(norm=norm, rcond=rcond, Wnorm=Wnorm)
-        self.compute_p(C_bias=C_bias)
+        self.compute_p(C_bias=C_bias, rcond=rcond)
         self.compute_V(C=C_errs, diag=diag)
 
     def _compute_dsq(self, kp, p, b, V):
@@ -676,13 +683,13 @@ class DelayQE(QE):
 
         qft_a = e^{-2pi i a n / N}
         qR_a = qft_a R
-        H_ab = 1/2 tr[qR_a^T qR_b]
-        q_a = 1/2 x1^T qR_a^T qR_a x2
+        H_ab = tr[qR_a^T qR_b]
+        q_a = x1^T qR_a^T qR_a x2
         M = H^-1 or H^-1/2 or propto I
         p_a = M_ab q_b
         W = M H
-        E_a = 1/2 M_ab (qR_b^T qR_b)
-        V_ab = 2 tr(C E_a C E_b)
+        E_a = M_ab (qR_b^T qR_b)
+        V_ab = tr(C E_a C E_b) (variance of p.real)
         b_a = tr(C E_a)
         """
         super().__init__(x1, [1, dx], x2=x2, idx=[slice(None), idx], scalar=scalar, C=C)
@@ -712,9 +719,6 @@ class DelayQE(QE):
         (optional) pixels used in the R weighting step. qft_pad
         is only needed if self.idx is used to select a subset
         of pixels.
-
-        Note that this Q = qft qft^T also holds the 1/2
-        factor in front of the estimator.
         """
         super().compute_qft()
 
@@ -722,17 +726,14 @@ class DelayQE(QE):
         shape = [R.shape for R in self.R]
         self.k[0] = self.kperp
         self.qft[0] = np.eye(self.x1.shape[0])
-        self.qft_pad[0] = np.eye(self.x1.shape[0])
-
+        self._compute_qft_pad()
         if self.useQ:
-            self.Q[0][:] = np.eye(self.x1.shape[0])
-            self.Q_pad[0][:] = np.eye(self.x1.shape[0])
-
+            self._compute_Q()
         self._compute_qR()
 
     def compute_H(self):
         """
-        Compute H_ab = 0.5 tr[R^T Q_a R Q_b]
+        Compute H_ab = tr[R^T Q_a R Q_b]
         For R = C^-1, H = F is the Fisher matrix.
 
         Modifies the H[0] matrix based on delay spectrum.
@@ -742,7 +743,6 @@ class DelayQE(QE):
         self.H
         """
         super().compute_H()
-        self.H[0] /= len(self.H[0])
 
     def compute_p(self, C_bias=None, rcond=1e-15):
         """
