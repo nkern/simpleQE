@@ -227,6 +227,11 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
     Ke = Keor(freqs[:, None]) * eor_mult
     Kn = Knoise(freqs[:, None]) * noise_mult
 
+    if cosmo is None:
+        cosmo = Cosmology()
+    if Omega_Eff is None:
+        Omega_Eff = 1
+
     np.random.seed(seed)
     mean = np.zeros_like(freqs)
     f = np.atleast_2d(mn.rvs(mean, Kf/2, Ntimes) + 1j * mn.rvs(mean, Kf/2, Ntimes)).T[None, data_spw]
@@ -254,6 +259,77 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
     N = DelayQE(n1, dx, kperp, x2=n2, C=(Kn)[data_spw, data_spw], idx=pspec_spw, scalar=scalar)
 
     return D, F, E, N
+
+
+def ravel_mats(mat1, mat2, cov=False):
+    """
+    Given two square matrices mat1 n x n and mat2 m x m,
+    ravel and multiply them and return a matrix nm x nm.
+    This is consistent with their diagonals representing two
+    dimensions of an array of shape (n, m) and calling np.ravel(arr).
+    mat1 or mat2 can also be fed as a vector (assumed to be diagonal of matrix),
+    or an integer (assumed to be identity matrix of integer length).
+
+    Parameters
+    ----------
+    mat1 : ndarray or int
+        First matrix to ravel. If this is a diagonal matrix,
+        this can be sped-up by feeding mat1.diagonal().
+        If an integer is fed, this becomes np.eye(mat1) and
+        simple broadcasting is applied.
+    mat2 : ndarray or int
+        Second matrix to ravel. If this is a diagonal matrix,
+        this can be sped-up by feeding mat2.diagonal().
+        If an integer is fed, this becomes np.eye(mat1) and
+        simple broadcasting is applied.
+    cov : bool, optional
+        If True, mat1 and mat2 represent covariance matrices,
+        which require special normalization. Otherwise, keep
+        this set to False (e.g. window functions, FT operators)
+
+    Returns
+    -------
+    ndarray
+    """
+    # if one of mat1 or mat2 is fed as an integer
+    # then we are simply broadcasting along this dimension
+    identity = False
+    if isinstance(mat1, int):
+        identity = True
+        assert isinstance(mat2, np.ndarray)
+        if mat2.ndim == 1:
+            mat1 = np.ones(mat1)
+        elif mat2.ndim == 2:
+            mat1 = np.eye(mat1)
+    elif isinstance(mat2, int):
+        identity = True
+        assert isinstance(mat1, np.ndarray)
+        if mat1.ndim == 1:
+            mat2 = np.ones(mat2)
+        elif mat1.ndim == 2:
+            mat2 = np.eye(mat2)
+
+    # if either mat1 or mat2 is ndim=2, make sure both are
+    if mat1.ndim != mat2.ndim:
+        if mat1.ndim == 1:
+            mat1 = np.diag(mat1)
+        else:
+            mat2 = np.diag(mat2)
+
+    # take kronecker product
+    out = np.kron(mat1, mat2)
+
+    if cov and not identity:
+        # normalize units if mat1 and mat2 are covariances
+        if out.ndim == 1:
+            # if just variances, use geometric mean
+            out = np.sqrt(out)
+        else:
+            # if off-diagonals, normalize by diagonal
+            T = 1 / out.diagonal()**(1./4)
+            out = T[:, None] * out * T[None, :]
+
+    return out
 
 
 def interp_Wcdf(W, k, lower_perc=0.16, upper_perc=0.84):

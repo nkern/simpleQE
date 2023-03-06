@@ -6,7 +6,6 @@ A simple quadratic estimator for 21 cm intensity mapping.
 """
 
 import numpy as np
-
 from . import utils
 
 
@@ -47,6 +46,8 @@ class QE:
         C : list, optional
             List of covariance matrices for each
             data dimension in x1. Only for metadata purposes.
+            Note that if feeding x1 and x2 with indepenent noise
+            realizations, one should divide C by sqrt(2).
         useQ : bool, optional
             If True, form outerproduct Q_a = qft_a qft_a^T
             and compute downstream products as well,
@@ -402,8 +403,8 @@ class QE:
             C = [None for m in M]
         qR = self.E if self.useQ else self.qR
         for i, (c, m, qr) in enumerate(zip(C, self.M, qR)):
-            # default is identity matrix
-            v = np.eye(len(qr))
+            # default is None
+            v = None
 
             # update if covariance is provided
             if c is not None:
@@ -424,18 +425,17 @@ class QE:
 
                 if diag:
                     # compute just variance
-                    v = np.diag(np.einsum("aij,aji->a", ec, ec))
+                    v = np.einsum("aij,aji->a", ec, ec).real
 
                 else:
                     # compute full covariance
-                    v = np.einsum("aij,bji->ab", ec, ec)
+                    v = np.einsum("aij,bji->ab", ec, ec).real
 
                 v *= self.scalar**2
 
             V.append(v)
 
         self.V = V
-        self.Vdiag = diag
 
     def average_bandpowers(self, k_avg=None, two_dim=True, axis=None):
         """
@@ -489,39 +489,27 @@ class QE:
 
             # stack matrices to match unraveled dimensions
             if two_dim:
-                # compute V
-                if self.Vdiag:
-                    V = np.diag(np.kron(Vi[0].diagonal(), Vi[1].diagonal()))
-                else:
-                    V = np.kron(Vi[0], Vi[1])
-                # normalize units of V
-                T = 1 / V.diagonal()**(1./4)
-                V = T[:, None] * V * T[None, :]
-                # compute W
-                W = np.kron(Wi[0], Wi[1])
-                # compute k
+                # stack V
+                V1 = Vi[0] if Vi[0] is not None else pi.shape[0] 
+                V2 = Vi[1] if Vi[1] is not None else pi.shape[1]
+                V = utils.ravel_mats(V1, V2, cov=True)
+                # stsack W
+                W = utils.ravel_mats(Wi[0], Wi[1])
+                # stack k
                 K = np.meshgrid(ki[0], ki[1])
                 k = np.sqrt(K[0].ravel()**2 + K[1].ravel()**2)
+
             else:
-                # compute V
-                if self.Vdiag:
-                    V = np.diag(np.kron(np.kron(Vi[0].diagonal(), Vi[1].diagonal()), Vi[2].diagonal()))
-                else:
-                    V = np.kron(np.kron(Vi[0], Vi[1]), Vi[2])
-                # normalize units of V
-                T = 1 / V.diagonal()**(1./4)
-                V = T[:, None] * V * T[None, :]
-                # compute W
-                W = np.kron(Wi[0], np.kron(Wi[1], Wi[2]))
-                # compute k
+                # stack V
+                V1 = Vi[0] if Vi[0] is not None else pi.shape[0] 
+                V2 = Vi[1] if Vi[1] is not None else pi.shape[1]
+                V3 = Vi[2] if Vi[2] is not None else pi.shape[2]
+                V = utils.ravel_mats(V1, utils.ravel_mats(V2, V3, cov=True), cov=True)
+                # stack W
+                W = utils.ravel_mats(Wi[0], utils.ravel_mats(Wi[1], Wi[2]))
+                # stack k
                 K = np.meshgrid(ki[0], ki[1], ki[2])
                 k = np.sqrt(K[0].ravel()**2 + K[1].ravel()**2 + K[2].ravel()**2)
-
-            # In the above block, we assume that the way to span V1 and V2 across
-            # two dimensions is to take the geometric mean between V1 and V2.
-            # This is done by using kron(V1, V2) / sqrt(diagonal(kron(V1, V2)))
-            # The division is done via T @ V^2 @ T to properly normalize off-diagonal
-            # TODO: confirm this is correct experimentally via correlated noise simulations...
 
             # get k_avg points
             if k_avg is None:
@@ -533,6 +521,7 @@ class QE:
             p = np.moveaxis(pi, axis, 0)
             b = np.moveaxis(bi, axis, 0)
             V = Vi[axis]
+            V = V if V is not None else np.ones(pi.shape[axis])
             W = Wi[axis]
             k = np.abs(ki[axis])
 
@@ -552,8 +541,8 @@ class QE:
             #A[i, nn[1]] = (_k - k_avg[nn[0]]) / (k_avg[nn[1]] - k_avg[nn[0]])
 
         # compute inverse matrices
-        if self.Vdiag:
-            Vinv = np.diag(1/V.diagonal().clip(1e-30))
+        if V.ndim == 1:
+            Vinv = np.diag(1 / V.clip(1e-30))
         else:
             Vinv = np.linalg.pinv(V)
         AtVinv = A.T @ Vinv
