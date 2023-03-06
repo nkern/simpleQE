@@ -38,15 +38,33 @@ def test_interp_Wcdf():
     freqs = np.linspace(140e6, 160e6, 100, endpoint=False)
     D, F, E, N = prep_data(freqs, Ntimes=200)
     t = np.diag(signal.windows.blackmanharris(len(freqs)))
-    D.set_R(t), D.compute_Q(); D.compute_H(); D.compute_q()
-    D.compute_MWVp(norm='I', C_bias=F.C, C_data=D.C); D.compute_dsq()
+    D.set_R(t), D.compute_qft(); D.compute_H(); D.compute_q()
+    D.compute_MWVp(norm='I', C_bias=F.C, C_errs=D.C)
+    D.average_bandpowers(); D.compute_dsq()
 
     # compute window function bounds
-    med, low, hi = utils.interp_Wcdf(D.W, D.kp)
+    med, low, hi = utils.interp_Wcdf(D.W[1], D.k[1])
     # assert med is close to kp
-    assert np.isclose(med, D.kp, atol=np.diff(D.kp)[0]).all()
+    assert np.isclose(med, D.k[1], atol=np.diff(D.k[1])[0]).all()
     # assert symmetric low / hi (except for boundaries)
-    assert np.isclose(low[3:-3], hi[3:-3]).all()
+    assert np.isclose(low[3:-3], hi[3:-3], atol=1e-10).all()
+
+
+def test_ravel_mats():
+    # test identity broadcasting
+    f = np.linspace(100, 120, 100)
+    Cg = utils.gauss_cov(f, 1) * (f/110)**-2.2
+    out = utils.ravel_mats(10, Cg, cov=True)
+    assert len(out) == 1000
+    assert np.isclose(out.diagonal()[:100], Cg.diagonal()).all()
+
+    # test geometric mean broadcasting
+    f = np.linspace(100, 120, 25)
+    Cg1 = utils.gauss_cov(f, 1) * (f/110)**-2.2
+    Cg2 = utils.gauss_cov(f, 0.5)  * (f/110)**-1.5
+    out = utils.ravel_mats(Cg1, Cg2, cov=True)
+    assert len(out) == 25*25
+    assert np.isclose(out.diagonal(), np.sqrt(Cg1.diagonal()[:, None] * Cg2.diagonal()[None, :]).ravel()).all()
 
 
 def test_cov():
