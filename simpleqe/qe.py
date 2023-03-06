@@ -39,8 +39,8 @@ class QE:
         scalar : float, optional
             Overall normalization for power spectra.
             E.g. for delay spectrum (see HERA Memo #27)
-            this is X2Y * Omega_Eff * Nfreqs * dfreq
-            assuming unit-normalized qft matrices
+            this is X2Y * Omega_Eff * dfreq
+            assuming ortho-normalized ft matrices
             (i.e. np.fft.fft convention).
             Default is 1.
         C : list, optional
@@ -134,8 +134,8 @@ class QE:
         shape = [R.shape for R in self.R]
         self.k = [np.fft.fftshift(2*np.pi*np.fft.fftfreq(n[0], dx)) for n, dx in zip(shape, self.dx)]
 
-        # compute qft for each data dimension: this is inverse ft without 1 / N
-        self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0])*n[0]), axes=0) for n in shape]
+        # compute qft for each data dimension: this is ft with 1 / sqrt(N)
+        self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0]), norm='ortho'), axes=0) for n in shape]
         self._compute_qft_pad()
 
         # compute Q
@@ -662,7 +662,10 @@ class DelayQE(QE):
             over a narrower bandwidth.
         scalar : float, optional
             Overall normalization for power spectra.
-            E.g. for delay spectrum see HERA Memo #27.
+            E.g. for delay spectrum (see HERA Memo #27)
+            this is X2Y * Omega_Eff * dfreq
+            assuming ortho-normalized ft matrices
+            (i.e. np.fft.fft convention).
             Default is 1.
         C : ndarray, optional
             Freq-freq covariance of data. Only used as metadata.

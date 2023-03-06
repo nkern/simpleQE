@@ -251,7 +251,7 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
 
     # compute cosmological scalar
     spw = pspec_spw if pspec_spw is not None else slice(None)
-    scalar = cosmo.X2Y(cosmo.f2z(freqs.mean())) * Omega_Eff * (len(freqs[spw]) * df)
+    scalar = cosmo.X2Y(cosmo.f2z(freqs.mean())) * Omega_Eff * df # Nfreqs is omitted b/c FT uses ortho convention
 
     D = DelayQE(x1, dx, kperp, x2=x2, C=(Kf + Ke + Kn)[data_spw, data_spw], idx=pspec_spw, scalar=scalar)
     F = DelayQE(f,  dx, kperp, C=(Kf)[data_spw, data_spw], idx=pspec_spw, scalar=scalar)
