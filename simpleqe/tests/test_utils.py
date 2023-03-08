@@ -54,17 +54,9 @@ def test_ravel_mats():
     # test identity broadcasting
     f = np.linspace(100, 120, 100)
     Cg = utils.gauss_cov(f, 1) * (f/110)**-2.2
-    out = utils.ravel_mats(10, Cg, cov=True)
+    out = utils.ravel_mats(10, Cg)
     assert len(out) == 1000
     assert np.isclose(out.diagonal()[:100], Cg.diagonal()).all()
-
-    # test geometric mean broadcasting
-    f = np.linspace(100, 120, 25)
-    Cg1 = utils.gauss_cov(f, 1) * (f/110)**-2.2
-    Cg2 = utils.gauss_cov(f, 0.5)  * (f/110)**-1.5
-    out = utils.ravel_mats(Cg1, Cg2, cov=True)
-    assert len(out) == 25*25
-    assert np.isclose(out.diagonal(), np.sqrt(Cg1.diagonal()[:, None] * Cg2.diagonal()[None, :]).ravel()).all()
 
 
 def test_cov():
