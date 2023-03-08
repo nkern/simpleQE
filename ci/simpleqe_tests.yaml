@@ -14,4 +14,3 @@ dependencies:
   - psutil
   - pytest-cov
   - coveralls
-  - "gcc>=12.1.0"

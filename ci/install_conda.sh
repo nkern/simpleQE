@@ -10,6 +10,7 @@ source ${HOME}/miniconda/etc/profile.d/conda.sh
 
 conda activate ${ENV_NAME}
 
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${HOME}/miniconda/lib
 
 conda list -n ${ENV_NAME}
 # check that the python version matches the desired one; exit immediately if not
