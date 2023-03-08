@@ -4,6 +4,7 @@ simpleQE
 
 from . import utils
 from . import qe
-from .qe import QE
+from .qe import QE, DelayQE
+from . import data
 
-__version__ = "0.0.1"
+__version__ = "1.0.0"
