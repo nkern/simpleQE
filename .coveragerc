@@ -1,5 +1,11 @@
 [run]
-omit = */tests/*
+omit =
+     */tests/*
+     */data/*
+     */config/*
 
 [report]
-omit = */tests/*
+omit =
+     */tests/*
+     */data/*
+     */config/*
