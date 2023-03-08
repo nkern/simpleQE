@@ -5,6 +5,9 @@ conda update -q conda
 conda info -a
 conda create --name=${ENV_NAME}  python=$PYTHON --quiet
 conda env update -n ${ENV_NAME} -f ci/${ENV_NAME}.yaml
+
+source ${HOME}/miniconda/etc/profile.d/conda.sh
+
 conda activate ${ENV_NAME}
 
 

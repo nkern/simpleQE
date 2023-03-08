@@ -37,17 +37,17 @@ jobs:
         bash $HOME/miniconda.sh -b -p $HOME/miniconda
     - name: Setup Environment
       run: |
-        export PATH="$HOME/miniconda/bin:$PATH"
+        export PATH="$HOME/miniconda/bin:$PATH";
         ./ci/install_conda.sh
     - name: Install
       run: |
-        export PATH="$HOME/miniconda/bin:$PATH"
-        source activate ${ENV_NAME}
+        export PATH="$HOME/miniconda/bin:$PATH";
+        source activate ${ENV_NAME};
         pip install .
     - name: Run Tests
       run: |
-        export PATH="$HOME/miniconda/bin:$PATH"
-        source activate $ENV_NAME
+        export PATH="$HOME/miniconda/bin:$PATH";
+        source activate ${ENV_NAME};
         pytest --cov-report xml:./coverage.xml
     - name: Upload Coverage (Ubuntu)
       if: matrix.os == 'ubuntu-latest' && success()
