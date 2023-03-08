@@ -9,7 +9,7 @@ from scipy import signal
 import copy
 
 from simpleqe import qe, utils
-from simpleqe.data import DATA_PATH
+from simpleqe import data as sqe_data
 
 
 def prep_data(freqs, data_spw=None, pspec_spw=None, seed=None, ind_noise=True, Ntimes=200):
@@ -38,11 +38,11 @@ def test_QE_object():
 def normalization_test():
     # test normalization against hera_pspec
     # get data
-    with h5py.File(DATA_PATH + "/zen.2458116.30448.HH.C.uvh5") as f:
+    with h5py.File(sqe_data.DATA_PATH + "/zen.2458116.30448.HH.C.uvh5") as f:
         freqs = f['Header']['freq_array'][:].squeeze()
         data = f['Data']['visdata'][:].squeeze()
     # get pre-computed power spectra from hera_pspec [dated 10/2020]
-    with h5py.File(DATA_PATH + "/zen.2458116.30448.HH.C.h5") as f:
+    with h5py.File(sqe_data.DATA_PATH + "/zen.2458116.30448.HH.C.h5") as f:
         pspec = f['data_spw0'][:].squeeze()
         window_func = f['window_function_spw0'][0].squeeze()
         c = ast.literal_eval(f.attrs['cosmo'])
