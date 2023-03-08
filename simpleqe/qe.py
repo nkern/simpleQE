@@ -109,7 +109,8 @@ class QE:
         self.R
         """
         if R is None:
-            R = [np.eye(self.x1.shape[i]) for i in range(self.Ndim)]
+            R = [None for i in range(self.Ndim)]
+        R = [r if r is not None else np.eye(self.x1.shape[i]) for i, r in enumerate(R)]
         if self.idx is not None:
             R = [r[idx] if idx is not None else r for r, idx in zip(R, self.idx)]
 
@@ -136,6 +137,8 @@ class QE:
 
         # compute qft for each data dimension: this is ft with 1 / sqrt(N)
         self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0]), norm='ortho'), axes=0) for n in shape]
+
+        # compute padded versions of qft
         self._compute_qft_pad()
 
         # compute Q
@@ -150,7 +153,7 @@ class QE:
         self.qft_pad = []
         shape = [R.shape for R in self.R]
         for q, n in zip(self.qft, shape):
-            p = np.zeros((n[0], (n[1]-n[0])//2), dtype=float)
+            p = np.zeros((q.shape[0], (n[1]-n[0])//2), dtype=float)
             self.qft_pad.append(np.hstack([p, np.hstack([q, p])]))
 
     def _compute_Q(self):
@@ -333,9 +336,15 @@ class QE:
         es_str = 'abcd'[:self.Ndim]
         p = self.q
         for i, m in enumerate(self.M):
-            str_in = es_str.replace(es_str[i], 'j')
-            str_out = es_str.replace(es_str[i], 'i')
-            p = np.einsum("ij,{}...->{}...".format(str_in, str_out), m, p)
+            if self.norm == 'I':
+                str_in = es_str.replace(es_str[i], 'i')
+                str_out = es_str.replace(es_str[i], 'i')
+                p = np.einsum('i,{}...->{}...'.format(str_in, str_out), m.diagonal(), p)
+
+            else:
+                str_in = es_str.replace(es_str[i], 'j')
+                str_out = es_str.replace(es_str[i], 'i')
+                p = np.einsum("ij,{}...->{}...".format(str_in, str_out), m, p)
 
         self.p = p * self.scalar
 
@@ -378,10 +387,13 @@ class QE:
             delattr(self, 'V_avg')
             delattr(self, 'W_avg')
 
-    def compute_V(self, C=None, diag=True):
+    def compute_V(self, C=None, diag=True, unnorm_ax=0):
         """
-        Compute bandpower covariance.
-        Must run compute_MW() first.
+        Compute bandpower covariance. Note that bandpower
+        covariances for each data dimension are normalized
+        such that V.diagonal().mean() = 1, except for
+        one dimension, which holds the p^2 units,
+        specified by unnorm_ax.
 
         Parameters
         ----------
@@ -393,6 +405,13 @@ class QE:
             bandpower covariance. Otherwise compute
             off-diagonal as well.
 
+        unnorm_ax : int, optional
+            All bandpower covariances are normalized
+            such that V.diagonal().mean() = 1, except
+            for one dimension which is left as-is
+            holding the p^2 units, specified by
+            this parameter.
+
         Results
         -------
         self.V
@@ -400,7 +419,7 @@ class QE:
         assert hasattr(self, 'M'), "Must run compute_MW()"
         V = []
         if C is None:
-            C = [None for m in M]
+            C = [None for m in self.M]
         qR = self.E if self.useQ else self.qR
         for i, (c, m, qr) in enumerate(zip(C, self.M, qR)):
             # default is None
@@ -433,11 +452,20 @@ class QE:
 
                 v *= self.scalar**2
 
+                # normalize if needed
+                if i != unnorm_ax:
+                    if diag:
+                        v /= v.mean()
+                    else:
+                        v /= v.diagonal().mean()
+
             V.append(v)
 
         self.V = V
 
-    def average_bandpowers(self, k_avg=None, two_dim=True, axis=None):
+    def average_bandpowers(self, k_avg=None, two_dim=True, axis=None,
+                           drop_neg=False, neg_var=1e40, diag_weight=True,
+                           var_func=None):
         """
         Average the computed normalized bandpowers
         and their associated metadata (e.g. covariances
@@ -454,13 +482,48 @@ class QE:
             If None, perform average of first N dimensions.
             If provided, only average this axis onto k_avg
             (e.g. this is used for folding the power spectra).
+        drop_neg : bool, optional
+            If folding bandpowers (i.e. passing axis), you can choose
+            to drop the negative k bandpowers instead of averaging them
+            with positive k bandpowers (e.g. if using real-valued data,
+            negative k is just copy of positive k). Assumes
+            k modes in self.k[axis] are ordered monotonically from
+            negative to positive.
+        neg_var : float, optional
+            If drop_neg, this is the variance assigned to negative k
+            modes for this axis.
+        diag_weight : bool, optional
+            If True (default), perform averaging using inverse variance
+            weighting (as opposed to full inverse covariance weighting).
+            This still propagates the full covariance matrices
+            if they are present.
+        var_func : callable, optional
+            Variance modifying function, used when diag_weight = True.
+            This is a function that takes the raveled k_x, k_y, (k_z,)
+            arrays and returns a 1d array of length k_x.size, which is
+            added to the variance weighting vector before taking its
+            inverse. In other words, this allows you to down-weight
+            certain regions of k_x & k_y (& k_z) space before taking
+            their weighted sum. E.g.
+            var_func = lambda kx, ky, *args: 1e10 * (ky > 0.1).astype(float)
 
         Notes
         -----
-        p_xyz = A p_avg
-        p_avg = [A.T C_xyz^-1 A]^-1 A.T C_xyz^-1 p_xyz
-        C_avg = [A.T C_xyz^-1 A]^-1
-        W_avg = [A.T C_xyz^-1 A]^-1 A.T C_xyz^-1 W_xyz A
+        Assume the cylindrical (or 3D) pspectra is related to the
+        spherical (averaged) pspectra as a linear operation
+
+            p_xyz = A p_avg
+        
+        The estimated p_avg given p_xyz is then just linear least squares.
+        Assume that our weighted estimator is weighted by Cinv = C^-1.
+        Note that this can be C_xyz^-1, but does not have to be!
+        Then we get 
+
+            ACAinv = [A.T Cinv A]^-1
+            p_avg  = ACAinv A.T Cinv p_xyz
+            C_avg  = ACAinv A^T Cinv C_xyz Cinv^T A ACAinv^T
+                   = ACAinv (if Cinv = C_xyz^-1)
+            W_avg  = ACAinv A.T Cinv W_xyz A
         """
         assert hasattr(self, 'p'), "Must run self.compute_p()"
         assert hasattr(self, 'V'), "Must run self.compute_V()"
@@ -492,11 +555,11 @@ class QE:
                 # stack V
                 V1 = Vi[0] if Vi[0] is not None else pi.shape[0] 
                 V2 = Vi[1] if Vi[1] is not None else pi.shape[1]
-                V = utils.ravel_mats(V1, V2, cov=True)
-                # stsack W
+                V = utils.ravel_mats(V1, V2)
+                # stack W
                 W = utils.ravel_mats(Wi[0], Wi[1])
                 # stack k
-                K = np.meshgrid(ki[0], ki[1])
+                K = np.meshgrid(ki[1], ki[0])
                 k = np.sqrt(K[0].ravel()**2 + K[1].ravel()**2)
 
             else:
@@ -504,11 +567,11 @@ class QE:
                 V1 = Vi[0] if Vi[0] is not None else pi.shape[0] 
                 V2 = Vi[1] if Vi[1] is not None else pi.shape[1]
                 V3 = Vi[2] if Vi[2] is not None else pi.shape[2]
-                V = utils.ravel_mats(V1, utils.ravel_mats(V2, V3, cov=True), cov=True)
+                V = utils.ravel_mats(V1, utils.ravel_mats(V2, V3))
                 # stack W
                 W = utils.ravel_mats(Wi[0], utils.ravel_mats(Wi[1], Wi[2]))
                 # stack k
-                K = np.meshgrid(ki[0], ki[1], ki[2])
+                K = np.meshgrid(ki[2], ki[1], ki[0])
                 k = np.sqrt(K[0].ravel()**2 + K[1].ravel()**2 + K[2].ravel()**2)
 
             # get k_avg points
@@ -525,8 +588,20 @@ class QE:
             W = Wi[axis]
             k = np.abs(ki[axis])
 
+            # drop bandpowers if desired
+            if drop_neg:
+                truncate = slice(None, np.argmin(abs(ki[axis] - 0.0)))
+                if V.ndim == 1:
+                    V[truncate] = neg_var
+                else:
+                    V[truncate, truncate] = 0.0
+                    V[range(truncate.stop), range(truncate.stop)] = neg_var
+
             if k_avg is None:
-                k_avg = np.unique(k)
+                if drop_neg:
+                    k_avg = ki[axis][ki[axis] >= 0]
+                else:
+                    k_avg = np.unique(k)
 
         # construct A matrix: p_xyz = A @ p_avg
         A = np.zeros((len(k), len(k_avg)), dtype=float)
@@ -541,8 +616,13 @@ class QE:
             #A[i, nn[1]] = (_k - k_avg[nn[0]]) / (k_avg[nn[1]] - k_avg[nn[0]])
 
         # compute inverse matrices
+        Veps = 0
+        if var_func is not None:
+            Veps = var_func(*(_k.ravel() for _k in K))
         if V.ndim == 1:
-            Vinv = np.diag(1 / V.clip(1e-30))
+            Vinv = np.diag(1 / (V.clip(1e-30) + Veps))
+        elif diag_weight:
+            Vinv = np.diag(1 / (V.diagonal().clip(1e-30) + Veps))
         else:
             Vinv = np.linalg.pinv(V)
         AtVinv = A.T @ Vinv
@@ -552,7 +632,14 @@ class QE:
         # get averaged quantities
         p_avg = np.einsum("ij,j...->i...", D, p)
         b_avg = np.einsum("ij,j...->i...", D, b)
-        V_avg = AtVinvAinv
+        if diag_weight:
+            if V.ndim == 1:
+                V_avg = (D * V) @ D.T
+            else:
+                V_avg = D @ V @ D.T
+        else:
+            V_avg = AtVinvAinv
+        V_avg = V_avg if V.ndim > 1 else V_avg.diagonal()
         W_avg = D @ W @ A
 
         if axis is None:
@@ -574,10 +661,16 @@ class QE:
             self.W_avg = Wi[:axis] + [W_avg] + Wi[axis+1:]
             self.k_avg = ki[:axis] + [k_avg] + ki[axis+1:]
 
-    def fold_bandpowers(self):
+    def fold_bandpowers(self, drop_neg_ax=None):
         """
         Average negative and positive k modes for each
         data dimension in self.p.
+
+        Parameters
+        ----------
+        drop_neg_ax : int, optional
+            Instead of averaging negative k with positive k,
+            simply drop negative k modes for this axis.
 
         Notes
         -----
@@ -589,7 +682,7 @@ class QE:
         """
         assert hasattr(self, 'p'), "Must run self.compute_p()"
         for i in range(self.Ndim):
-            self.average_bandpowers(axis=i)
+            self.average_bandpowers(axis=i, drop_neg=i==drop_neg_ax)
 
     def compute_MWVp(self, norm='I', rcond=1e-15, C_bias=None, C_errs=None,
                      diag=True, Wnorm=True):
@@ -701,7 +794,7 @@ class DelayQE(QE):
         R : ndarray
             (Nspw_freqs, Nfreqs) weighting matrix
         """
-        super().set_R([np.eye(self.x1.shape[0]), R])
+        super().set_R([None, R])
 
     def compute_qft(self):
         """
@@ -720,7 +813,6 @@ class DelayQE(QE):
         super().compute_qft()
 
         # update objects for delay spectrum estimator
-        shape = [R.shape for R in self.R]
         self.k[0] = self.kperp
         self.qft[0] = np.eye(self.x1.shape[0])
         self._compute_qft_pad()
