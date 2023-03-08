@@ -16,7 +16,6 @@ class Cosmology(FlatLambdaCDM):
     """
     Subclass of astropy.FlatLambdaCDM, with additional methods for 21cm intensity mapping.
     """
-
     def __init__(self, H0=67.7, Om0=0.3075, Ob0=0.0486):
         """
         Subclass of astropy.FlatLambdaCDM, with additional methods for 21cm intensity mapping.
@@ -176,7 +175,7 @@ class Cosmology(FlatLambdaCDM):
 
 def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mult=1,
              ind_noise=True, data_spw=None, pspec_spw=None, seed=0, cosmo=None, Omega_Eff=None):
-    """Generate mock dataset and return QE objects
+    """Generate mock dataset and return DelayQE objects
 
     Parameters
     ----------
@@ -212,44 +211,111 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
 
     Returns
     -------
-    QE object
+    DelayQE object
         Full dataset
-    QE object
+    DelayQE object
         Foreground dataset
-    QE object
+    DelayQE object
         EoR dataset
-    QE object
+    DelayQE object
         Noise dataset
     """
-    from simpleqe import QE
+    from simpleqe.qe import DelayQE
     if data_spw is None:
         data_spw = slice(None)
     Kf = Kfg(freqs[:, None]) * fg_mult
     Ke = Keor(freqs[:, None]) * eor_mult
     Kn = Knoise(freqs[:, None]) * noise_mult
 
+    if cosmo is None:
+        cosmo = Cosmology()
+    if Omega_Eff is None:
+        Omega_Eff = 1
+
     np.random.seed(seed)
     mean = np.zeros_like(freqs)
-    f = np.atleast_2d(mn.rvs(mean, Kf/2, Ntimes) + 1j * mn.rvs(mean, Kf/2, Ntimes))[:, data_spw]
-    e = np.atleast_2d(mn.rvs(mean, Ke/2, Ntimes) + 1j * mn.rvs(mean, Ke/2, Ntimes))[:, data_spw]
-    n1 = np.atleast_2d(mn.rvs(mean, Kn/2, Ntimes) + 1j * mn.rvs(mean, Kn/2, Ntimes))[:, data_spw]
+    f = np.atleast_2d(mn.rvs(mean, Kf/2, Ntimes) + 1j * mn.rvs(mean, Kf/2, Ntimes)).T[None, data_spw]
+    e = np.atleast_2d(mn.rvs(mean, Ke/2, Ntimes) + 1j * mn.rvs(mean, Ke/2, Ntimes)).T[None, data_spw]
+    n1 = np.atleast_2d(mn.rvs(mean, Kn/2, Ntimes) + 1j * mn.rvs(mean, Kn/2, Ntimes)).T[None, data_spw]
     x1 = f + e + n1
     if ind_noise:
-        n2 = np.atleast_2d(mn.rvs(mean, Kn/2, Ntimes) + 1j * mn.rvs(mean, Kn/2, Ntimes))[:, data_spw]
+        n2 = np.atleast_2d(mn.rvs(mean, Kn/2, Ntimes) + 1j * mn.rvs(mean, Kn/2, Ntimes)).T[None, data_spw]
         x2 = f + e + n2
     else:
         x2 = x1.copy()
     
-    D = QE(freqs[data_spw], x1, x2=x2, C=(Kf + Ke + Kn)[data_spw, data_spw], spw=pspec_spw,
-           cosmo=cosmo, Omega_Eff=Omega_Eff)
-    F = QE(freqs[data_spw], f, C=Kf[data_spw, data_spw], spw=pspec_spw,
-           cosmo=cosmo, Omega_Eff=Omega_Eff)
-    E = QE(freqs[data_spw], e, C=Ke[data_spw, data_spw], spw=pspec_spw,
-           cosmo=cosmo, Omega_Eff=Omega_Eff)
-    N = QE(freqs[data_spw], n1, x2=n2, C=Kn[data_spw, data_spw], spw=pspec_spw,
-           cosmo=cosmo, Omega_Eff=Omega_Eff)
-    
+    # metadata
+    df = freqs[1] - freqs[0]
+    dx = df * cosmo.dRpara_df(cosmo.f2z(freqs.mean()))
+    kperp = [0.0]  # assume this is kperp of 0 even though this isn't the auto-correlation
+
+    # compute cosmological scalar
+    spw = pspec_spw if pspec_spw is not None else slice(None)
+    scalar = cosmo.X2Y(cosmo.f2z(freqs.mean())) * Omega_Eff * df # Nfreqs is omitted b/c FT uses ortho convention
+
+    D = DelayQE(x1, dx, kperp, x2=x2, C=(Kf + Ke + Kn)[data_spw, data_spw], idx=pspec_spw, scalar=scalar)
+    F = DelayQE(f,  dx, kperp, C=(Kf)[data_spw, data_spw], idx=pspec_spw, scalar=scalar)
+    E = DelayQE(e,  dx, kperp, C=(Ke)[data_spw, data_spw], idx=pspec_spw, scalar=scalar)
+    N = DelayQE(n1, dx, kperp, x2=n2, C=(Kn)[data_spw, data_spw], idx=pspec_spw, scalar=scalar)
+
     return D, F, E, N
+
+
+def ravel_mats(mat1, mat2):
+    """
+    Given two square matrices mat1 n x n and mat2 m x m,
+    ravel and multiply them and return a matrix nm x nm.
+    This is consistent with their diagonals representing two
+    dimensions of an array of shape (n, m) and calling np.ravel(arr).
+    mat1 or mat2 can also be fed as a vector (assumed to be diagonal of matrix),
+    or an integer (assumed to be identity matrix of integer length).
+
+    Parameters
+    ----------
+    mat1 : ndarray or int
+        First matrix to ravel. If this is a diagonal matrix,
+        this can be sped-up by feeding mat1.diagonal().
+        If an integer is fed, this becomes np.eye(mat1) and
+        simple broadcasting is applied.
+    mat2 : ndarray or int
+        Second matrix to ravel. If this is a diagonal matrix,
+        this can be sped-up by feeding mat2.diagonal().
+        If an integer is fed, this becomes np.eye(mat1) and
+        simple broadcasting is applied.
+
+    Returns
+    -------
+    ndarray
+    """
+    # if one of mat1 or mat2 is fed as an integer
+    # then we are simply broadcasting along this dimension
+    identity = False
+    if isinstance(mat1, int):
+        identity = True
+        assert isinstance(mat2, np.ndarray)
+        if mat2.ndim == 1:
+            mat1 = np.ones(mat1)
+        elif mat2.ndim == 2:
+            mat1 = np.eye(mat1)
+    elif isinstance(mat2, int):
+        identity = True
+        assert isinstance(mat1, np.ndarray)
+        if mat1.ndim == 1:
+            mat2 = np.ones(mat2)
+        elif mat1.ndim == 2:
+            mat2 = np.eye(mat2)
+
+    # if either mat1 or mat2 is ndim=2, make sure both are
+    if mat1.ndim != mat2.ndim:
+        if mat1.ndim == 1:
+            mat1 = np.diag(mat1)
+        else:
+            mat2 = np.diag(mat2)
+
+    # take kronecker product
+    out = np.kron(mat1, mat2)
+
+    return out
 
 
 def interp_Wcdf(W, k, lower_perc=0.16, upper_perc=0.84):
@@ -274,7 +340,7 @@ def interp_Wcdf(W, k, lower_perc=0.16, upper_perc=0.84):
         dk of WF's 84th (default) percentile from median
     """
     # get cdf: take sum of only abs(W)
-    W = np.abs(W)
+    W = np.abs(W) / W.sum(axis=1, keepdims=True)
     Wcdf = np.array([np.sum(W[:, :i+1].real, axis=1) for i in range(W.shape[1]-1)]).T
     
     # get shifted k such that a symmetric window has 50th perc at max value

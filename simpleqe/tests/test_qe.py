@@ -27,17 +27,12 @@ def test_QE_object():
     # setup data
     freqs = np.linspace(140e6, 160e6, 100, endpoint=False)
     D, F, E, N = prep_data(freqs, Ntimes=200)
-    I = np.eye(D.Nfreqs)
-    D.set_R(I), D.compute_Q(); D.compute_H(); D.compute_q()
-    D.compute_MWVp(norm='I', C_bias=F.C, C_data=D.C); D.compute_dsq()
-    for p in ['p', 'V', 'b', 'W', 'p_sph', 'V_sph', 'b_sph', 'W_sph', 'dsq', 'dsq_b', 'dsq_V']:
+    I = np.eye(len(freqs))
+    D.set_R(I), D.compute_qft(); D.compute_H(); D.compute_q()
+    D.compute_MWVp(norm='I', C_bias=F.C, C_errs=D.C);
+    D.average_bandpowers(); D.compute_dsq()
+    for p in ['p', 'V', 'b', 'W', 'p_avg', 'V_avg', 'b_avg', 'W_avg', 'dsq', 'dsq_b', 'dsq_V']:
         assert hasattr(D, p)
-
-    # try setting a prior
-    p0 = copy.deepcopy(D.p)
-    D.compute_Q(prior=np.ones(D.Nbps) * 10); D.compute_H(); D.compute_q()
-    D.compute_MWVp(norm='I', C_bias=F.C, C_data=D.C)
-    assert np.isclose(p0.real, D.p.real * 10).all()   # ensure old equals new * prior
 
 
 def normalization_test():
@@ -55,17 +50,20 @@ def normalization_test():
         OP, OPP, bf = f['OmegaP'][:].squeeze(), f['OmegaPP'][:].squeeze(), f.attrs['beam_freqs']
         Oeff = np.interp(freqs, bf, OP**2 / OPP).mean()
 
-    # run simpleQE
-    D = qe.QE(freqs, data, cosmo=cosmo, Omega_Eff=Oeff)
-    t = np.diag(signal.windows.blackmanharris(len(freqs)))
-    D.set_R(t), D.compute_Q(); D.compute_H(); D.compute_q()
-    D.compute_MWVp(norm='I')
+    for useQ in [False, True]:
+        # run simpleQE
+        scalar = cosmo.X2Y(cosmo.f2z(freqs.mean())) * Oeff * (len(freqs) * np.diff(freqs)[0])
+        dx = cosmo.dRpara_df(cosmo.f2z(freqs.mean())) * np.diff(freqs)[0]
+        D = qe.DelayQE(data.T[None], dx, [0], scalar=scalar)
+        D.useQ = useQ
+        t = np.diag(signal.windows.blackmanharris(len(freqs)))
+        D.set_R(t), D.compute_qft(); D.compute_H(); D.compute_q()
+        D.compute_MWVp(norm='I')
 
-    # compare normalization to hera_pspec
-    ratio = D.p.T[:, ::-1] / pspec  # inverse fft convention wrt hera_pspec
-    assert np.abs(1 - ratio.real).max() < 0.01  # assert the same to 1%
+        # compare normalization to hera_pspec
+        ratio = D.p[0].T[:, ::-1] / pspec  # inverse fft convention wrt hera_pspec
+        assert np.abs(1 - ratio.real).max() < 0.01  # assert the same to 1%
 
-    # compare window function
-    window_func[window_func.real < 1e-5] = 1  # only compare non-near-zero values
-    D.W[D.W.real < 1e-5] = 1
-    assert np.isclose(window_func.real / D.W.real, 1, atol=0.01).all()  # compare to 1%
+        # compare window function
+        W = D.W[1]
+        assert np.isclose(window_func.real - W.real, 0, atol=0.01).all()  # compare to 1%

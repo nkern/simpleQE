@@ -1,0 +1,16 @@
+name: simpleQE
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - "astropy>=4.3"
+  - pip
+  - h5py
+  - "numpy>=1.18"
+  - pytest
+  - "scipy>=1.4.0"
+  - mpi4py
+  - pyyaml
+  - psutil
+  - pytest-cov
+  - coveralls
