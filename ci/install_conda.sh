@@ -5,7 +5,7 @@ conda update -q conda
 conda info -a
 conda create --name=${ENV_NAME}  python=$PYTHON --quiet
 conda env update -n ${ENV_NAME} -f ci/${ENV_NAME}.yaml
-source activate ${ENV_NAME}
+conda activate ${ENV_NAME}
 
 
 conda list -n ${ENV_NAME}
