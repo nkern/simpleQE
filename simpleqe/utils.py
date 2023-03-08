@@ -261,7 +261,7 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
     return D, F, E, N
 
 
-def ravel_mats(mat1, mat2, cov=False):
+def ravel_mats(mat1, mat2):
     """
     Given two square matrices mat1 n x n and mat2 m x m,
     ravel and multiply them and return a matrix nm x nm.
@@ -282,10 +282,6 @@ def ravel_mats(mat1, mat2, cov=False):
         this can be sped-up by feeding mat2.diagonal().
         If an integer is fed, this becomes np.eye(mat1) and
         simple broadcasting is applied.
-    cov : bool, optional
-        If True, mat1 and mat2 represent covariance matrices,
-        which require special normalization. Otherwise, keep
-        this set to False (e.g. window functions, FT operators)
 
     Returns
     -------
@@ -318,16 +314,6 @@ def ravel_mats(mat1, mat2, cov=False):
 
     # take kronecker product
     out = np.kron(mat1, mat2)
-
-    if cov and not identity:
-        # normalize units if mat1 and mat2 are covariances
-        if out.ndim == 1:
-            # if just variances, use geometric mean
-            out = np.sqrt(out)
-        else:
-            # if off-diagonals, normalize by diagonal
-            T = 1 / out.diagonal()**(1./4)
-            out = T[:, None] * out * T[None, :]
 
     return out
 
