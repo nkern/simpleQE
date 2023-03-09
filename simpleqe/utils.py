@@ -12,6 +12,37 @@ from astropy import units, constants
 from astropy.cosmology import FlatLambdaCDM
 
 
+class _DTYPE:
+    def __init__(self):
+        self.set_default('float64')        
+
+    def set_default(self, dtype):
+        self.dtype = dtype
+
+    def __call__(self, dtype):
+        self.set_default(dtype)
+
+    def float(self):
+        if self.dtype in ["float64", np.float64]:
+            return np.float64
+        elif self.dtype in ["float32", np.float32]:
+            return np.float32
+        elif self.dtype in ["float16", np.float16]:
+            return np.float16
+
+    def complex(self):
+        if self.dtype in ["float64", np.float64]:
+            return np.complex128
+        elif self.dtype in ["float32", np.float32]:
+            return np.complex64
+        elif self.dtype in ["float16", np.float16]:
+            return np.complex32
+
+set_default_dtype = _DTYPE()
+fdtype = set_default_dtype.float
+cdtype = set_default_dtype.complex
+
+
 class Cosmology(FlatLambdaCDM):
     """
     Subclass of astropy.FlatLambdaCDM, with additional methods for 21cm intensity mapping.
@@ -223,9 +254,9 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
     from simpleqe.qe import DelayQE
     if data_spw is None:
         data_spw = slice(None)
-    Kf = Kfg(freqs[:, None]) * fg_mult
-    Ke = Keor(freqs[:, None]) * eor_mult
-    Kn = Knoise(freqs[:, None]) * noise_mult
+    Kf = Kfg(freqs[:, None]).astype(fdtype()) * fg_mult
+    Ke = Keor(freqs[:, None]).astype(fdtype()) * eor_mult
+    Kn = Knoise(freqs[:, None]).astype(fdtype()) * noise_mult
 
     if cosmo is None:
         cosmo = Cosmology()
@@ -233,13 +264,15 @@ def gen_data(freqs, Kfg, Keor, Knoise, Ntimes=1, fg_mult=1, eor_mult=1, noise_mu
         Omega_Eff = 1
 
     np.random.seed(seed)
-    mean = np.zeros_like(freqs)
+    mean = np.zeros_like(freqs, dtype=fdtype())
     f = np.atleast_2d(mn.rvs(mean, Kf/2, Ntimes) + 1j * mn.rvs(mean, Kf/2, Ntimes)).T[None, data_spw]
     e = np.atleast_2d(mn.rvs(mean, Ke/2, Ntimes) + 1j * mn.rvs(mean, Ke/2, Ntimes)).T[None, data_spw]
     n1 = np.atleast_2d(mn.rvs(mean, Kn/2, Ntimes) + 1j * mn.rvs(mean, Kn/2, Ntimes)).T[None, data_spw]
+    f, e, n1 = f.astype(cdtype()), e.astype(cdtype()), n1.astype(cdtype())
     x1 = f + e + n1
     if ind_noise:
         n2 = np.atleast_2d(mn.rvs(mean, Kn/2, Ntimes) + 1j * mn.rvs(mean, Kn/2, Ntimes)).T[None, data_spw]
+        n2 = n2.astype(cdtype())
         x2 = f + e + n2
     else:
         x2 = x1.copy()
@@ -294,16 +327,16 @@ def ravel_mats(mat1, mat2):
         identity = True
         assert isinstance(mat2, np.ndarray)
         if mat2.ndim == 1:
-            mat1 = np.ones(mat1)
+            mat1 = np.ones(mat1, dtype=fdtype())
         elif mat2.ndim == 2:
-            mat1 = np.eye(mat1)
+            mat1 = np.eye(mat1).astype(fdtype())
     elif isinstance(mat2, int):
         identity = True
         assert isinstance(mat1, np.ndarray)
         if mat1.ndim == 1:
-            mat2 = np.ones(mat2)
+            mat2 = np.ones(mat2, dtype=fdtype())
         elif mat1.ndim == 2:
-            mat2 = np.eye(mat2)
+            mat2 = np.eye(mat2).astype(fdtype())
 
     # if either mat1 or mat2 is ndim=2, make sure both are
     if mat1.ndim != mat2.ndim:
@@ -356,7 +389,7 @@ def interp_Wcdf(W, k, lower_perc=0.16, upper_perc=0.84):
         low_err.append(m - interp(lower_perc))
         hi_err.append(interp(upper_perc) - m)
 
-    return np.array(med), np.array(low_err), np.array(hi_err)
+    return np.array(med, dtype=fdtype()), np.array(low_err, dtype=fdtype()), np.array(hi_err, dtype=fdtype())
 
 
 def gauss_cov(freqs, ell, var=1.0):
@@ -396,4 +429,4 @@ def diag_cov(freqs, var=1.0):
     freqs : array-like, (Nfreqs,)
     diag : float or array-like, variance of diagonal
     """
-    return np.eye(len(freqs)) * var
+    return np.eye(len(freqs)).astype(fdtype()) * var

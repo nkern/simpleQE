@@ -7,6 +7,7 @@ A simple quadratic estimator for 21 cm intensity mapping.
 
 import numpy as np
 from . import utils
+from .utils import fdtype, cdtype
 
 
 class QE:
@@ -133,10 +134,10 @@ class QE:
         assert hasattr(self, 'R'), "Must first run set_R()"
         # compute k-modes for each data dimension
         shape = [R.shape for R in self.R]
-        self.k = [np.fft.fftshift(2*np.pi*np.fft.fftfreq(n[0], dx)) for n, dx in zip(shape, self.dx)]
+        self.k = [np.fft.fftshift(2*np.pi*np.fft.fftfreq(n[0], dx)).astype(fdtype()) for n, dx in zip(shape, self.dx)]
 
         # compute qft for each data dimension: this is ft with 1 / sqrt(N)
-        self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0]), norm='ortho'), axes=0) for n in shape]
+        self.qft = [np.fft.fftshift(np.fft.ifft(np.eye(n[0]), norm='ortho').astype(cdtype()), axes=0) for n in shape]
 
         # compute padded versions of qft
         self._compute_qft_pad()
@@ -153,7 +154,7 @@ class QE:
         self.qft_pad = []
         shape = [R.shape for R in self.R]
         for q, n in zip(self.qft, shape):
-            p = np.zeros((q.shape[0], (n[1]-n[0])//2), dtype=float)
+            p = np.zeros((q.shape[0], (n[1]-n[0])//2), dtype=cdtype())
             self.qft_pad.append(np.hstack([p, np.hstack([q, p])]))
 
     def _compute_Q(self):
@@ -250,6 +251,7 @@ class QE:
     def _compute_M(self, norm, H, rcond=1e-15, Wnorm=True):
         if norm == 'I':
             M = np.eye(len(H)) / H.sum(axis=1)
+            M = np.asarray(M, dtype=fdtype())
         elif norm in ['H^-1', 'H^-1/2']:
             u,s,v = np.linalg.svd(H)
             truncate = np.where(s > (s.max() * rcond))[0]
@@ -349,7 +351,7 @@ class QE:
         self.p = p * self.scalar
 
         # compute bias term
-        b = np.zeros(self.p.shape, dtype=float)
+        b = np.zeros(self.p.shape, dtype=fdtype())
         QR = self.E if self.useQ else self.qR
         if C_bias is not None:
             for i, (c, m, qr) in enumerate(zip(C_bias, self.M, QR)):
@@ -404,7 +406,6 @@ class QE:
             If True, only compute diagonal of
             bandpower covariance. Otherwise compute
             off-diagonal as well.
-
         unnorm_ax : int, optional
             All bandpower covariances are normalized
             such that V.diagonal().mean() = 1, except
@@ -464,7 +465,7 @@ class QE:
         self.V = V
 
     def average_bandpowers(self, k_avg=None, two_dim=True, axis=None,
-                           drop_neg=False, neg_var=1e40, diag_weight=True,
+                           drop_neg=False, neg_var=1e30, diag_weight=True,
                            var_func=None):
         """
         Average the computed normalized bandpowers
@@ -576,7 +577,7 @@ class QE:
 
             # get k_avg points
             if k_avg is None:
-                k_avg = np.linspace(k.min(), k.max(), max(len(ki[0]), len(ki[1]))//2)
+                k_avg = np.linspace(k.min(), k.max(), max(len(ki[0]), len(ki[1]))//2, dtype=fdtype())
 
         else:
             # otherwise, we are folding this axis
@@ -584,7 +585,7 @@ class QE:
             p = np.moveaxis(pi, axis, 0)
             b = np.moveaxis(bi, axis, 0)
             V = Vi[axis]
-            V = V if V is not None else np.ones(pi.shape[axis])
+            V = V.copy() if V is not None else np.ones(pi.shape[axis], dtype=fdtype())
             W = Wi[axis]
             k = np.abs(ki[axis])
 
@@ -604,7 +605,7 @@ class QE:
                     k_avg = np.unique(k)
 
         # construct A matrix: p_xyz = A @ p_avg
-        A = np.zeros((len(k), len(k_avg)), dtype=float)
+        A = np.zeros((len(k), len(k_avg)), dtype=fdtype())
         for i, _k in enumerate(k):
             # nearest neighbor interpolation
             nn = np.argmin(np.abs(k_avg - abs(_k)))
@@ -618,7 +619,7 @@ class QE:
         # compute inverse matrices
         Veps = 0
         if var_func is not None:
-            Veps = var_func(*(_k.ravel() for _k in K))
+            Veps = np.asarray(var_func(*(_k.ravel() for _k in K)), dtype=fdtype())
         if V.ndim == 1:
             Vinv = np.diag(1 / (V.clip(1e-30) + Veps))
         elif diag_weight:
@@ -632,11 +633,8 @@ class QE:
         # get averaged quantities
         p_avg = np.einsum("ij,j...->i...", D, p)
         b_avg = np.einsum("ij,j...->i...", D, b)
-        if diag_weight:
-            if V.ndim == 1:
-                V_avg = (D * V) @ D.T
-            else:
-                V_avg = D @ V @ D.T
+        if diag_weight and V.ndim == 2:
+            V_avg = D @ V @ D.T
         else:
             V_avg = AtVinvAinv
         V_avg = V_avg if V.ndim > 1 else V_avg.diagonal()
@@ -661,7 +659,7 @@ class QE:
             self.W_avg = Wi[:axis] + [W_avg] + Wi[axis+1:]
             self.k_avg = ki[:axis] + [k_avg] + ki[axis+1:]
 
-    def fold_bandpowers(self, drop_neg_ax=None):
+    def fold_bandpowers(self, drop_neg_ax=None, diag_weight=True):
         """
         Average negative and positive k modes for each
         data dimension in self.p.
@@ -682,10 +680,10 @@ class QE:
         """
         assert hasattr(self, 'p'), "Must run self.compute_p()"
         for i in range(self.Ndim):
-            self.average_bandpowers(axis=i, drop_neg=i==drop_neg_ax)
+            self.average_bandpowers(axis=i, drop_neg=i==drop_neg_ax, diag_weight=diag_weight)
 
     def compute_MWVp(self, norm='I', rcond=1e-15, C_bias=None, C_errs=None,
-                     diag=True, Wnorm=True):
+                     diag=True, Wnorm=True, unnorm_ax=0):
         """
         Shallow wrapper for compute_MW, p, V and spherical average
 
@@ -697,10 +695,11 @@ class QE:
         C_errs : see compute_V()
         diag : see compute_V()
         Wnorm : see compute_MW()
+        unnorm_ax : see compute_V()
         """
         self.compute_MW(norm=norm, rcond=rcond, Wnorm=Wnorm)
         self.compute_p(C_bias=C_bias, rcond=rcond)
-        self.compute_V(C=C_errs, diag=diag)
+        self.compute_V(C=C_errs, diag=diag, unnorm_ax=unnorm_ax)
 
     def _compute_dsq(self, kp, p, b, V):
         kfac = kp[:, None]**3 / 2 / np.pi**2
@@ -813,8 +812,8 @@ class DelayQE(QE):
         super().compute_qft()
 
         # update objects for delay spectrum estimator
-        self.k[0] = self.kperp
-        self.qft[0] = np.eye(self.x1.shape[0])
+        self.k[0] = np.asarray(self.kperp, dtype=fdtype())
+        self.qft[0] = np.eye(self.x1.shape[0]).astype(fdtype())
         self._compute_qft_pad()
         if self.useQ:
             self._compute_Q()
@@ -853,7 +852,7 @@ class DelayQE(QE):
         """
         super().compute_p(C_bias=[None, C_bias], rcond=rcond)
 
-    def compute_V(self, C=None, diag=True):
+    def compute_V(self, C=None, diag=True, **kwargs):
         """
         Compute bandpower covariance.
         Must run compute_MW() first.
@@ -872,5 +871,5 @@ class DelayQE(QE):
         -------
         self.V
         """
-        super().compute_V(C=[None, C], diag=diag)
+        super().compute_V(C=[None, C], diag=diag, unnorm_ax=1)
 
