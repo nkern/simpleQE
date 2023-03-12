@@ -250,12 +250,14 @@ class QE:
 
     def _compute_M(self, norm, H, rcond=1e-15, Wnorm=True):
         if norm == 'I':
-            M = np.eye(len(H)) / H.sum(axis=1)
+            Hsum = H.sum(axis=1)
+            Hsum[np.isclose(Hsum, 0.0, atol=1e-15)] = 1.0
+            M = np.eye(len(H)) / Hsum
             M = np.asarray(M, dtype=fdtype())
         elif norm in ['H^-1', 'H^-1/2']:
             u,s,v = np.linalg.svd(H)
             truncate = np.where(s > (s.max() * rcond))[0]
-            u, s = u[:, truncate], s[truncate]
+            u, s, v = u[:, truncate], s[truncate], v[truncate, :]
             # we use u @ s @ u.T instead of v.T @ s @ u.T
             # because we want to invert within the
             # left space of H, not re-project back to
