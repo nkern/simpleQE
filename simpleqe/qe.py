@@ -249,8 +249,10 @@ class QE:
         self.H = H
 
     def _compute_M(self, norm, H, rcond=1e-15, Wnorm=True):
-        if norm == 'I':
+        if norm in ['I', 'Imax']:
             Hsum = H.sum(axis=1)
+            if norm == 'Imax':
+                Hsum = np.max(Hsum, keepdims=True)
             Hsum[np.isclose(Hsum, 0.0, atol=1e-15)] = 1.0
             M = np.eye(len(H)) / Hsum
             M = np.asarray(M, dtype=fdtype())
@@ -275,7 +277,7 @@ class QE:
             W = M @ H
 
             # ensure they are normalized
-            M /= W.sum(axis=1, keepdims=True).clip(1e-10)
+            M /= W.sum(axis=1, keepdims=True).clip(1e-20)
 
         return M
 
@@ -289,8 +291,12 @@ class QE:
 
         Parameters
         ----------
-        norm : str, ['I', 'H^-1', 'H^-1/2']
-            Bandpower normalization matrix type
+        norm : str, ['I', 'Imax', 'H^-1', 'H^-1/2']
+            Bandpower normalization matrix type.
+            'I'      : M is a diagonal matrix (row-sum of H)
+            'Imax'   : M is scalar matrix (max of H row-sum)
+            'H^-1'   : M is pseudo-inverse of H
+            'H^-1/2' : M is pseudo-half-inverse of H 
         rcond : float
             Relative condition for truncation
             of svd for norm='H^-1' or norm='H^-1/2'
@@ -340,7 +346,7 @@ class QE:
         es_str = 'abcd'[:self.Ndim]
         p = self.q
         for i, m in enumerate(self.M):
-            if self.norm == 'I':
+            if self.norm in ['I', 'Imax']:
                 str_in = es_str.replace(es_str[i], 'i')
                 str_out = es_str.replace(es_str[i], 'i')
                 p = np.einsum('i,{}...->{}...'.format(str_in, str_out), m.diagonal(), p)
