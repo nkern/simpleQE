@@ -51,4 +51,5 @@ jobs:
         pytest --cov-report xml:./coverage.xml
     - name: Upload Coverage (Ubuntu)
       if: matrix.os == 'ubuntu-latest' && success()
-      uses: codecov/codecov-action@v3
+      run: |
+        bash <(curl -s https://codecov.io/bash) -t ${{ secrets.CODECOV_TOKEN }}
